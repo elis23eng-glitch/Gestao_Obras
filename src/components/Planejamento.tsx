@@ -213,7 +213,7 @@ export default function Planejamento({ selectedProjetoId, onSelectProjeto }: Pla
                   <div className="w-64 flex-shrink-0 pr-3">
                     <div className="flex items-center gap-1.5">
                       {depName && (
-                        <Link2 className="w-3 h-3 text-blue-400 flex-shrink-0" title={`Depende de: ${depName}`} />
+                        <Link2 className="w-3 h-3 text-blue-400 flex-shrink-0" aria-label={`Depende de: ${depName}`} />
                       )}
                       <span className="text-sm text-slate-700 truncate">{tarefa.nome}</span>
                     </div>

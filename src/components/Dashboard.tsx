@@ -355,7 +355,7 @@ export default function Dashboard({ selectedProjetoId, onSelectProjeto }: Dashbo
               </div>
             </div>
             {orcamentoItens.length > 0 && medicoes.length > 0 ? (
-              <DesvioChart itens={orcamentoItens} medicoes={medicoes} concluidoGeral={concluidoGeral} />
+              <DesvioChart itens={orcamentoItens} concluidoGeral={concluidoGeral} />
             ) : (
               <div className="text-center py-12 text-slate-400">
                 <p className="text-sm">Dados insuficientes para desvio.</p>
@@ -536,11 +536,9 @@ function CurvaSChart({
 
 function DesvioChart({
   itens,
-  medicoes,
   concluidoGeral,
 }: {
   itens: OrcamentoItem[];
-  medicoes: Medicao[];
   concluidoGeral: number;
 }) {
   const maxVal = Math.max(...itens.map(i => i.quantidade * i.custo_unitario), 1);

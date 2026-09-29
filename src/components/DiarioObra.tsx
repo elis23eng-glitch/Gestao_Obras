@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { BookOpen, Plus, X, Cloud, Users, AlertTriangle, FileText, Calendar, Loader2, AlertCircle, User } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useRbac } from '@/lib/rbac';
-import type { Projeto, DiarioObra, UsuarioPerfil } from '@/types/database';
+import type { Projeto, DiarioObra } from '@/types/database';
+import type { UsuarioPerfil } from '@/lib/rbac';
 
 interface DiarioObraProps {
   selectedProjetoId: string | null;

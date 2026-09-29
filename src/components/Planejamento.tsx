@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { CalendarRange, Link2, Plus, X, ArrowRightCircle, Lock, Loader2, Check, AlertCircle, Save } from 'lucide-react';
+import { CalendarRange, Link2, Plus, X, ArrowRightCircle, Lock, Loader2, Check, AlertCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useRbac } from '@/lib/rbac';
-import { parseBR, formatBR, formatBRL, ganttPosition, ganttWidth, daysBetween, round2 } from '@/lib/calc';
+import { parseBR, formatBRL, ganttPosition, ganttWidth, daysBetween } from '@/lib/calc';
 import type { Projeto, Tarefa } from '@/types/database';
 
 interface PlanejamentoProps {

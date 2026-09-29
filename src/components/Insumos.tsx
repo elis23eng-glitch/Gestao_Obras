@@ -240,6 +240,7 @@ export default function Insumos() {
             <h3 className="font-bold text-slate-800 text-sm">Composições de Custo Unitário</h3>
             {composicoes.map((comp) => {
               const insumosCount = selectedComposicao === comp.id ? composicaoInsumos.length : 0;
+              void insumosCount;
               return (
                 <button
                   key={comp.id}

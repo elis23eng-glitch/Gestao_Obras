@@ -7,7 +7,6 @@ import {
   Trash2,
   Layers,
   FileText,
-  TrendingUp,
   Save,
   Lock,
   Loader2,
@@ -33,6 +32,7 @@ export default function Orcamentos({ selectedProjetoId, onSelectProjeto }: Orcam
   const [orcamentoItens, setOrcamentoItens] = useState<OrcamentoItem[]>([]);
   const [composicoes, setComposicoes] = useState<Composicao[]>([]);
   const [composicaoInsumos, setComposicaoInsumos] = useState<Record<string, ComposicaoInsumo[]>>({});
+  void composicaoInsumos;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -43,7 +43,6 @@ export default function Orcamentos({ selectedProjetoId, onSelectProjeto }: Orcam
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showEapModal, setShowEapModal] = useState(false);
   const [eapForm, setEapForm] = useState({ codigo: '', nome: '', parent_id: '', nivel: '1' });
-  const [reqId, setReqId] = useState(0);
   const reqRef = useRef(0);
 
   const fetchProjetos = useCallback(async () => {
@@ -58,7 +57,6 @@ export default function Orcamentos({ selectedProjetoId, onSelectProjeto }: Orcam
 
   const fetchData = useCallback(async (projId: string) => {
     const currentReq = ++reqRef.current;
-    setReqId(currentReq);
     setLoading(true);
     setError(null);
 
@@ -143,12 +141,7 @@ export default function Orcamentos({ selectedProjetoId, onSelectProjeto }: Orcam
     });
   };
 
-  // Get composicao unit cost from insumos
-  const getComposicaoCusto = (compId: string): number => {
-    const insumos = composicaoInsumos[compId];
-    if (!insumos || insumos.length === 0) return 0;
-    return custoComposicao(insumos.map(ci => ({ coeficiente: ci.coeficiente, custo_unitario: ci.insumo?.custo_unitario || 0 })));
-  };
+
 
   // Ensure orcamento exists, create if not
   const ensureOrcamento = async (projId: string): Promise<Orcamento | null> => {
@@ -247,16 +240,7 @@ export default function Orcamentos({ selectedProjetoId, onSelectProjeto }: Orcam
     fetchData(selectedProjetoId);
   };
 
-  // Prevent EAP cycle: parent cannot be self or descendant
-  const isDescendant = (parentId: string, childId: string, items: EapItem[]): boolean => {
-    let current: string | null = parentId;
-    while (current) {
-      if (current === childId) return true;
-      const node = items.find(i => i.id === current);
-      current = node?.parent_id || null;
-    }
-    return false;
-  };
+
 
   const buildTree = (items: EapItem[]): EapItem[] => {
     const map = new Map<string, EapItem>();

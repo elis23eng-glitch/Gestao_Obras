@@ -12,6 +12,9 @@ import {
   Sparkles,
   LogOut,
   Loader2,
+  Crown,
+  AlertCircle,
+  Upload,
 } from 'lucide-react';
 import Dashboard from '@/components/Dashboard';
 import Obras from '@/components/Obras';
@@ -21,9 +24,11 @@ import Insumos from '@/components/Insumos';
 import DiarioObra from '@/components/DiarioObra';
 import AssistenteIA from '@/components/AssistenteIA';
 import Login from '@/components/Login';
+import ImportExport from '@/components/ImportExport';
 import { RbacProvider, useRbac, type Cargo } from '@/lib/rbac';
+import { supabase } from '@/lib/supabase';
 
-type Page = 'dashboard' | 'obras' | 'orcamentos' | 'planejamento' | 'insumos' | 'diario' | 'ia';
+type Page = 'dashboard' | 'obras' | 'orcamentos' | 'planejamento' | 'insumos' | 'diario' | 'ia' | 'import-export';
 
 const cargoLabel: Record<Cargo, string> = {
   admin: 'Administrador',
@@ -38,10 +43,12 @@ const cargoColor: Record<Cargo, string> = {
 };
 
 function AppContent() {
-  const { user, perfil, loading, permissoes, signOut } = useRbac();
+  const { user, perfil, loading, permissoes, signOut, refreshPerfil } = useRbac();
   const [page, setPage] = useState<Page>('dashboard');
   const [selectedProjetoId, setSelectedProjetoId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
   useEffect(() => {
     setSidebarOpen(false);
@@ -81,6 +88,24 @@ function AppContent() {
     return <Login />;
   }
 
+  const handleBootstrapAdmin = async () => {
+    setBootstrapping(true);
+    setBootstrapError(null);
+    const { data, error: err } = await supabase.rpc('bootstrap_first_admin');
+    if (err) {
+      setBootstrapError(err.message);
+      setBootstrapping(false);
+      return;
+    }
+    if (data && data.success === false) {
+      setBootstrapError(data.error || 'Não foi possível tornar-se administrador.');
+      setBootstrapping(false);
+      return;
+    }
+    await refreshPerfil();
+    setBootstrapping(false);
+  };
+
   if (!perfil) {
     return (
       <div className="flex items-center justify-center h-screen bg-slate-50 p-4">
@@ -91,15 +116,35 @@ function AppContent() {
           <h2 className="text-xl font-bold text-slate-800 mb-2">Perfil não vinculado</h2>
           <p className="text-sm text-slate-500 mb-6">
             Sua conta foi autenticada, mas ainda não foi vinculada a um perfil no sistema.
-            Solicite ao administrador que cadastre seu perfil (cargo) para liberar o acesso.
+            Se for o primeiro acesso, você pode se tornar administrador. Caso contrário,
+            solicite ao administrador que cadastre seu perfil (cargo).
           </p>
-          <button
-            onClick={() => signOut()}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-sm font-semibold"
-          >
-            <LogOut className="w-4 h-4" />
-            Sair
-          </button>
+          {bootstrapError && (
+            <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-lg p-3 mb-4 text-left">
+              <AlertCircle className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-rose-600">{bootstrapError}</p>
+            </div>
+          )}
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={handleBootstrapAdmin}
+              disabled={bootstrapping}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-sm font-semibold"
+            >
+              {bootstrapping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crown className="w-4 h-4" />}
+              {bootstrapping ? 'Configurando...' : 'Tornar-se Administrador'}
+            </button>
+            <button
+              onClick={() => signOut()}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg text-sm font-semibold"
+            >
+              <LogOut className="w-4 h-4" />
+              Sair
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-4">
+            O botão "Tornar-se Administrador" só funciona se não houver nenhum admin cadastrado.
+          </p>
         </div>
       </div>
     );
@@ -112,6 +157,7 @@ function AppContent() {
     { id: 'planejamento', label: 'Planejamento', icon: CalendarRange, allowed: true },
     { id: 'insumos', label: 'Banco de Insumos', icon: Package, allowed: permissoes.canManageProjetos },
     { id: 'diario', label: 'Diário de Obra', icon: BookOpen, allowed: permissoes.canCreateDiario },
+    { id: 'import-export', label: 'Importar/Exportar', icon: Upload, allowed: permissoes.canManageProjetos },
     { id: 'ia', label: 'Assistente de IA', icon: Sparkles, allowed: permissoes.canAccessAssistente },
   ];
 
@@ -124,6 +170,7 @@ function AppContent() {
     planejamento: 'Cronograma e linha do tempo',
     insumos: 'Insumos, composições e equalização',
     diario: 'Registro diário de ocorrências na obra',
+    'import-export': 'Importar e exportar dados',
     ia: 'Análise inteligente de obras e cronogramas',
   };
 
@@ -267,6 +314,9 @@ function AppContent() {
             />
           )}
           {page === 'ia' && permissoes.canAccessAssistente && <AssistenteIA selectedProjetoId={selectedProjetoId} />}
+          {page === 'import-export' && permissoes.canManageProjetos && (
+            <ImportExport selectedProjetoId={selectedProjetoId} onSelectProjeto={setSelectedProjetoId} />
+          )}
         </main>
       </div>
     </div>

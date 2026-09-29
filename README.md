@@ -101,10 +101,45 @@ npm run typecheck  # Verificação de tipos TypeScript
 npm run lint       # ESLint
 ```
 
+## Importação e Exportação
+
+### Importação de Insumos (CSV)
+
+Na aba "Importar/Exportar", é possível importar insumos em massa via arquivo CSV.
+
+- **Modelo:** `codigo;nome;unidade;custo_unitario;tipo` (tipos: material, mao_obra, equipamento, servico)
+- **Vírgula decimal:** use vírgula (ex: `28,50`), não ponto
+- **Prévia:** todos os dados são validados antes de gravar (códigos duplicados, valores inválidos, tipos inválidos)
+- **Relatório de erros:** cada linha com problema é exibida com a mensagem específica
+- **Confirmação:** nada é gravado até o usuário confirmar; falhas em linhas individuais não afetam as demais
+- Baixe o modelo pelo botão "Baixar Modelo"
+
+### Exportação de Orçamento
+
+- **CSV (Excel):** exporta EAP, composições, descrições, quantidades, custos, BDI e totais com vírgula decimal
+- **PDF (HTML imprimível):** gera documento HTML formatado que pode ser impresso como PDF (Ctrl+P no navegador)
+- Ambos incluem identificação da obra, cliente, data, versão do orçamento e os mesmos valores e arredondamentos usados na aplicação
+
+### Reagendamento por Dependências
+
+Na aba "Planejamento", conflitos de datas entre tarefas e suas dependências são detectados automaticamente. O usuário pode:
+- Visualizar todos os conflitos com detalhes (tarefa, datas, dependência)
+- Reagendar automaticamente: o início da tarefa é ajustado para o dia seguinte do término da dependência, preservando a duração original
+- Reagendar todas de uma vez com o botão "Reagendar Todas"
+
+## Bootstrap do Primeiro Administrador
+
+Quando o primeiro usuário autentica e ainda não tem perfil vinculado, a tela oferece um botão "Tornar-se Administrador". Esse botão chama a função `bootstrap_first_admin()` no banco, que:
+
+1. Verifica se já existe algum admin. Se sim, recusa.
+2. Se não há admin, vincula o usuário autenticado como admin (cria ou promove o perfil).
+
+Isso impede autoelevação pública após o primeiro admin estar configurado.
+
 ## Limitações
 
-- Importação/Exportação de Excel e CSV: não implementada nesta versão
-- O assistente é baseado em regras (consultas ao banco), não em modelo de IA
-- Reagendamento automático de tarefas por dependência: não implementado (conflitos são reportados)
+- O assistente é baseado em regras (consultas ao banco), não em modelo de IA externo
 - Dados de demonstração (seed) não devem ser tratados como valores reais de mercado
 - SINAPI: preços demonstrativos, não são base oficial atualizada
+- Importação de Excel (.xlsx) com múltiplas abas não é suportada; use CSV
+- Macros e fórmulas de planilhas não são executadas na importação

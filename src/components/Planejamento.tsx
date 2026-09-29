@@ -155,6 +155,56 @@ export default function Planejamento({ selectedProjetoId, onSelectProjeto }: Pla
     return null;
   };
 
+  // Collect all dependency conflicts
+  const dependencyConflicts = tarefas
+    .map(t => ({ tarefa: t, conflict: checkDependencyConflict(t) }))
+    .filter(x => x.conflict !== null);
+
+  // Auto-reschedule: shift task start to dependency end + 1 day, preserve duration
+  const handleReschedule = async (tarefaId: string) => {
+    const tarefa = tarefas.find(t => t.id === tarefaId);
+    if (!tarefa || !tarefa.dependencia_id) return;
+    const dep = tarefas.find(t => t.id === tarefa.dependencia_id);
+    if (!dep) return;
+
+    const depEnd = new Date(dep.data_fim);
+    const oldStart = new Date(tarefa.data_inicio);
+    const oldEnd = new Date(tarefa.data_fim);
+    const duration = daysBetween(oldStart, oldEnd) + 1; // +1 to include both days
+
+    // New start = day after dependency ends
+    const newStart = new Date(depEnd);
+    newStart.setDate(newStart.getDate() + 1);
+    const newEnd = new Date(newStart);
+    newEnd.setDate(newEnd.getDate() + duration - 1);
+
+    const newStartStr = newStart.toISOString().split('T')[0];
+    const newEndStr = newEnd.toISOString().split('T')[0];
+
+    const { error: err } = await supabase
+      .from('tarefas')
+      .update({ data_inicio: newStartStr, data_fim: newEndStr })
+      .eq('id', tarefaId);
+
+    if (err) {
+      setError('Erro ao reagendar: ' + err.message);
+      return;
+    }
+
+    setTarefas(prev => prev.map(t =>
+      t.id === tarefaId ? { ...t, data_inicio: newStartStr, data_fim: newEndStr } : t
+    ));
+  };
+
+  // Reschedule all conflicts at once
+  const handleRescheduleAll = async () => {
+    setSaving(true);
+    for (const { tarefa } of dependencyConflicts) {
+      await handleReschedule(tarefa.id);
+    }
+    setSaving(false);
+  };
+
   if (loading && !projeto) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -490,6 +540,40 @@ export default function Planejamento({ selectedProjetoId, onSelectProjeto }: Pla
           </div>
         </div>
       </div>
+
+      {/* Dependency conflicts warning */}
+      {dependencyConflicts.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-amber-800">
+                {dependencyConflicts.length} {dependencyConflicts.length === 1 ? 'conflito de dependência detectado' : 'conflitos de dependência detectados'}
+              </p>
+              <ul className="mt-2 space-y-1">
+                {dependencyConflicts.map(({ tarefa, conflict }) => (
+                  <li key={tarefa.id} className="text-xs text-amber-700">
+                    <strong>{tarefa.nome}:</strong> {conflict}
+                  </li>
+                ))}
+              </ul>
+              {permissoes.canEditTarefas && (
+                <button
+                  onClick={handleRescheduleAll}
+                  disabled={saving}
+                  className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-lg text-xs font-semibold"
+                >
+                  {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CalendarRange className="w-3.5 h-3.5" />}
+                  {saving ? 'Reagendando...' : 'Reagendar Todas'}
+                </button>
+              )}
+              <p className="text-xs text-amber-600 mt-2">
+                O reagendamento ajusta o início da tarefa para o dia seguinte do término da dependência, preservando a duração.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Progress controls */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6">

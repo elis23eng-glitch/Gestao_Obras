@@ -55,6 +55,7 @@ export interface Orcamento {
   bdi_taxa: number;
   status: 'rascunho' | 'aprovado' | 'revisao';
   created_at?: string;
+  updated_at?: string;
 }
 
 export interface OrcamentoItem {
@@ -66,6 +67,7 @@ export interface OrcamentoItem {
   quantidade: number;
   custo_unitario: number;
   created_at?: string;
+  updated_at?: string;
   eap_item?: EapItem;
   composicao?: Composicao;
 }
@@ -101,6 +103,7 @@ export interface Tarefa {
   percentual_concluido: number;
   valor_previsto: number;
   created_at?: string;
+  updated_at?: string;
   dependencia?: Tarefa | null;
 }
 
@@ -126,4 +129,5 @@ export interface DiarioObra {
   ocorrencias: string | null;
   impedimentos: string | null;
   created_at?: string;
+  updated_at?: string;
 }

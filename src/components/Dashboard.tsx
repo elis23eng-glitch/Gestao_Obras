@@ -10,58 +10,56 @@ import {
   CheckCircle2,
   Clock,
   Lock,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useRbac } from '@/lib/rbac';
+import { formatBRL, round2, precoVenda as calcPrecoVenda, custoDireto as calcCustoDireto, avançoFisico, daysBetween } from '@/lib/calc';
 import type { Projeto, Medicao, Tarefa, OrcamentoItem, Orcamento } from '@/types/database';
 
 interface DashboardProps {
+  selectedProjetoId: string | null;
   onSelectProjeto: (id: string) => void;
 }
 
-export default function Dashboard({ onSelectProjeto }: DashboardProps) {
+export default function Dashboard({ selectedProjetoId, onSelectProjeto }: DashboardProps) {
   const { permissoes } = useRbac();
+  const [projetos, setProjetos] = useState<Projeto[]>([]);
   const [projeto, setProjeto] = useState<Projeto | null>(null);
   const [medicoes, setMedicoes] = useState<Medicao[]>([]);
   const [tarefas, setTarefas] = useState<Tarefa[]>([]);
   const [orcamentoItens, setOrcamentoItens] = useState<OrcamentoItem[]>([]);
   const [orcamento, setOrcamento] = useState<Orcamento | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reqId, setReqId] = useState(0);
 
-  const fetchData = useCallback(async () => {
+  const fetchProjetos = useCallback(async () => {
+    const { data, error: err } = await supabase.from('projetos').select('*').order('created_at', { ascending: false });
+    if (err) { setError(err.message); return; }
+    setProjetos((data as Projeto[]) || []);
+  }, []);
+
+  useEffect(() => {
+    fetchProjetos();
+  }, [fetchProjetos]);
+
+  const fetchProjetoData = useCallback(async (projId: string, currentReqId: number) => {
     setLoading(true);
-    const { data: projData } = await supabase
-      .from('projetos')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (!projData) {
-      setLoading(false);
-      return;
-    }
-    setProjeto(projData as Projeto);
+    setError(null);
 
-    const [medRes, tarRes, orcRes] = await Promise.all([
-      supabase
-        .from('medicoes')
-        .select('*')
-        .eq('projeto_id', projData.id)
-        .order('data', { ascending: true }),
-      supabase
-        .from('tarefas')
-        .select('*')
-        .eq('projeto_id', projData.id)
-        .order('data_inicio', { ascending: true }),
-      supabase
-        .from('orcamentos')
-        .select('*')
-        .eq('projeto_id', projData.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+    const [projRes, medRes, tarRes, orcRes] = await Promise.all([
+      supabase.from('projetos').select('*').eq('id', projId).maybeSingle(),
+      supabase.from('medicoes').select('*').eq('projeto_id', projId).order('data', { ascending: true }),
+      supabase.from('tarefas').select('*').eq('projeto_id', projId).order('data_inicio', { ascending: true }),
+      supabase.from('orcamentos').select('*').eq('projeto_id', projId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     ]);
 
+    if (currentReqId !== reqId) return;
+
+    if (projRes.error) { setError(projRes.error.message); setLoading(false); return; }
+    setProjeto(projRes.data as Projeto);
     setMedicoes((medRes.data as Medicao[]) || []);
     setTarefas((tarRes.data as Tarefa[]) || []);
     setOrcamento((orcRes.data as Orcamento) || null);
@@ -71,20 +69,98 @@ export default function Dashboard({ onSelectProjeto }: DashboardProps) {
         .from('orcamento_itens')
         .select('*, eap_item:eap_itens(*), composicao:composicoes(*)')
         .eq('orcamento_id', orcRes.data.id);
+      if (currentReqId !== reqId) return;
       setOrcamentoItens((itensData as OrcamentoItem[]) || []);
+    } else {
+      setOrcamentoItens([]);
     }
 
     setLoading(false);
-  }, []);
+  }, [reqId]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (selectedProjetoId) {
+      const newReqId = reqId + 1;
+      setReqId(newReqId);
+      setProjeto(null);
+      setMedicoes([]);
+      setTarefas([]);
+      setOrcamentoItens([]);
+      setOrcamento(null);
+      fetchProjetoData(selectedProjetoId, newReqId);
+    } else {
+      setProjeto(null);
+      setLoading(false);
+    }
+  }, [selectedProjetoId]);
 
-  if (loading) {
+  const handleRetry = () => {
+    if (selectedProjetoId) {
+      const newReqId = reqId + 1;
+      setReqId(newReqId);
+      fetchProjetoData(selectedProjetoId, newReqId);
+    } else {
+      fetchProjetos();
+    }
+  };
+
+  if (loading && projetos.length === 0 && !selectedProjetoId) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+        <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (error && !projeto) {
+    return (
+      <div className="text-center py-20">
+        <AlertTriangle className="w-12 h-12 text-rose-300 mx-auto mb-4" />
+        <p className="text-slate-600 mb-2">Erro ao carregar dados</p>
+        <p className="text-sm text-slate-400 mb-4">{error}</p>
+        <button onClick={handleRetry} className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-semibold">
+          <RefreshCw className="w-4 h-4" /> Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
+  if (!selectedProjetoId) {
+    if (projetos.length === 0) {
+      return (
+        <div className="text-center py-20">
+          <Target className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+          <p className="text-slate-500 mb-2">Nenhuma obra cadastrada</p>
+          <p className="text-sm text-slate-400 mb-4">Crie uma obra na aba "Obras" para começar.</p>
+          <button onClick={() => onSelectProjeto('')} className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-semibold">
+            <ArrowRight className="w-4 h-4" /> Ir para Obras
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-slate-500">Selecione uma obra para visualizar os indicadores:</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {projetos.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => onSelectProjeto(p.id)}
+              className="text-left bg-white rounded-xl border border-slate-200 p-5 hover:border-emerald-300 hover:shadow-md transition-all"
+            >
+              <h4 className="font-semibold text-slate-800 text-sm mb-1">{p.nome}</h4>
+              <p className="text-xs text-slate-500">{p.cliente}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (loading && !projeto) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
       </div>
     );
   }
@@ -92,60 +168,52 @@ export default function Dashboard({ onSelectProjeto }: DashboardProps) {
   if (!projeto) {
     return (
       <div className="text-center py-20 text-slate-500">
-        Nenhum projeto encontrado. Crie uma obra na aba "Obras".
+        <p>Obra não encontrada ou sem acesso.</p>
       </div>
     );
   }
 
-  const custoDireto = orcamentoItens.reduce(
-    (sum, item) => sum + item.quantidade * item.custo_unitario,
-    0
-  );
-  const bdi = orcamento?.bdi_taxa || 25;
-  const custoIndireto = custoDireto * (bdi / 100);
-  const precoVenda = custoDireto + custoIndireto;
+  // Calculate indicators using centralized calc lib
+  const cd = calcCustoDireto(orcamentoItens.map(i => ({ quantidade: i.quantidade, custo_unitario: i.custo_unitario })));
+  const taxaBdi = orcamento?.bdi_taxa ?? 0;
+  const pv = calcPrecoVenda(cd, taxaBdi);
+  const valorBdi = round2(cd * taxaBdi / 100);
 
-  const totalGasto = medicoes.length > 0 ? medicoes[medicoes.length - 1].valor_realizado : 0;
-  const margemEstimada = precoVenda - totalGasto;
-  const margemPct = precoVenda > 0 ? (margemEstimada / precoVenda) * 100 : 0;
+  // Avanço físico
+  const avanço = avançoFisico(tarefas.map(t => ({ percentual_concluido: t.percentual_concluido, valor_previsto: t.valor_previsto })));
+  const concluidoGeral = avanço.percentual;
 
-  const today = new Date('2026-11-01');
-  const dataTermino = projeto.data_termino ? new Date(projeto.data_termino) : null;
-  const diasRestantes = dataTermino
-    ? Math.max(0, Math.ceil((dataTermino.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)))
+  // Custo realizado: sum of valor_realizado from medicoes (acumulado)
+  const custoRealizado = medicoes.length > 0
+    ? round2(medicoes.reduce((s, m) => s + m.valor_realizado, 0))
     : 0;
 
-  const concluidoGeral =
-    tarefas.length > 0
-      ? tarefas.reduce((sum, t) => sum + t.percentual_concluido, 0) / tarefas.length
-      : 0;
+  // Custo restante previsto = custo direto * (1 - avanço/100)
+  const custoRestantePrevisto = round2(cd * (1 - concluidoGeral / 100));
 
+  // Resultado final estimado = preco de venda - custo realizado - custo restante previsto
+  const resultadoFinalEstimado = round2(pv - custoRealizado - custoRestantePrevisto);
+  const hasDataForEstimativa = cd > 0 || custoRealizado > 0;
+
+  // Today (real current date)
+  const today = new Date();
+  const dataTermino = projeto.data_termino ? new Date(projeto.data_termino) : null;
+  const diasRestantes = dataTermino
+    ? Math.max(0, daysBetween(today, dataTermino))
+    : 0;
+
+  // Última medição
   const ultimaMedicao = medicoes.length > 0 ? medicoes[medicoes.length - 1] : null;
-  const desvioPercentual =
-    ultimaMedicao && ultimaMedicao.percentual_previsto > 0
-      ? ultimaMedicao.percentual_realizado - ultimaMedicao.percentual_previsto
-      : 0;
+  const desvioPontos = ultimaMedicao
+    ? round2(ultimaMedicao.percentual_realizado - ultimaMedicao.percentual_previsto)
+    : 0;
 
-  // Curva S data
+  // Curva S
   const curvaS = medicoes.map((m) => ({
     data: m.data,
     previsto: m.percentual_previsto,
     realizado: m.percentual_realizado,
   }));
-
-  const maxCurvaS = 100;
-
-  // Desvio por categoria (baseado nos itens do orçamento vs gasto proporcional)
-  const categoriasDesvio = orcamentoItens.map((item) => {
-    const orcado = item.quantidade * item.custo_unitario;
-    const realizado = orcado * (concluidoGeral / 100);
-    return {
-      nome: item.descricao || item.eap_item?.nome || 'Item',
-      orcado,
-      realizado,
-      desvio: orcado - realizado,
-    };
-  });
 
   return (
     <div className="space-y-6">
@@ -160,7 +228,7 @@ export default function Dashboard({ onSelectProjeto }: DashboardProps) {
             </div>
             <h3 className="text-xl lg:text-2xl font-bold mb-1">{projeto.nome}</h3>
             <p className="text-slate-400 text-sm">
-              {projeto.cliente} - {projeto.endereco}
+              {projeto.cliente}{projeto.endereco ? ` - ${projeto.endereco}` : ''}
             </p>
           </div>
           <button
@@ -178,44 +246,75 @@ export default function Dashboard({ onSelectProjeto }: DashboardProps) {
         {permissoes.canSeeFinancial ? (
           <KpiCard
             icon={Wallet}
-            label="Margem de Lucro Estimada"
-            value={`R$ ${margemEstimada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-            subtitle={`${margemPct.toFixed(1)}% do preço de venda`}
-            trend={margemPct > 15 ? 'up' : 'down'}
+            label="Preço de Venda"
+            value={formatBRL(pv)}
+            subtitle={`Custo direto: ${formatBRL(cd)} + BDI ${formatBRL(valorBdi)}`}
+            trend="neutral"
             color="emerald"
           />
         ) : (
-          <RestrictedKpi label="Margem de Lucro" />
+          <RestrictedKpi label="Preço de Venda" />
         )}
         {permissoes.canSeeFinancial ? (
           <KpiCard
             icon={TrendingDown}
-            label="Total Gasto"
-            value={`R$ ${totalGasto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-            subtitle={`de R$ ${precoVenda.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} previsto`}
+            label="Custo Realizado"
+            value={formatBRL(custoRealizado)}
+            subtitle={medicoes.length > 0 ? `${medicoes.length} medições registradas` : 'Sem medições'}
             trend="neutral"
             color="amber"
           />
         ) : (
-          <RestrictedKpi label="Total Gasto" />
+          <RestrictedKpi label="Custo Realizado" />
         )}
         <KpiCard
           icon={CalendarClock}
           label="Dias Restantes"
           value={`${diasRestantes}`}
-          subtitle={dataTermino ? `Término: ${dataTermino.toLocaleDateString('pt-BR')}` : ''}
+          subtitle={dataTermino ? `Término: ${dataTermino.toLocaleDateString('pt-BR')}` : 'Sem data definida'}
           trend={diasRestantes > 30 ? 'up' : 'down'}
           color="blue"
         />
         <KpiCard
           icon={Target}
-          label="Conclusão Geral"
-          value={`${concluidoGeral.toFixed(1)}%`}
-          subtitle={`Previsto: ${ultimaMedicao?.percentual_previsto || 0}%`}
-          trend={desvioPercentual >= 0 ? 'up' : 'down'}
+          label="Avanço Físico"
+          value={`${formatBR(concluidoGeral, 1)}%`}
+          subtitle={avanço.isWeighted ? 'Ponderado por valor' : 'Média simples'}
+          trend={desvioPontos >= 0 ? 'up' : 'down'}
           color="violet"
         />
       </div>
+
+      {/* Resultado estimado row */}
+      {permissoes.canSeeFinancial && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-6">
+          <h3 className="font-bold text-slate-800 mb-4">Resultado Final Estimado</h3>
+          {hasDataForEstimativa ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <p className="text-xs text-slate-500">Preço de Venda</p>
+                <p className="text-lg font-bold text-slate-800">{formatBRL(pv)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Custo Realizado</p>
+                <p className="text-lg font-bold text-amber-600">{formatBRL(custoRealizado)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Custo Restante Previsto</p>
+                <p className="text-lg font-bold text-slate-600">{formatBRL(custoRestantePrevisto)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Resultado Estimado</p>
+                <p className={`text-lg font-bold ${resultadoFinalEstimado >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                  {formatBRL(resultadoFinalEstimado)}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400">Dados insuficientes. Cadastre orçamento e medições para estimar o resultado final.</p>
+          )}
+        </div>
+      )}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -235,25 +334,40 @@ export default function Dashboard({ onSelectProjeto }: DashboardProps) {
               </span>
             </div>
           </div>
-          <CurvaSChart data={curvaS} max={maxCurvaS} />
+          {curvaS.length > 0 ? (
+            <CurvaSChart data={curvaS} />
+          ) : (
+            <div className="text-center py-12 text-slate-400">
+              <Target className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+              <p className="text-sm">Sem medições registradas.</p>
+              <p className="text-xs mt-1">Registre medições na aba Planejamento para visualizar a curva S.</p>
+            </div>
+          )}
         </div>
 
-        {/* Desvio de Orçamento - only for financial roles */}
+        {/* Desvio de Orçamento */}
         {permissoes.canSeeFinancial ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h3 className="font-bold text-slate-800">Desvio de Orçamento</h3>
-                <p className="text-xs text-slate-500">Orçado vs. Gasto Real por item</p>
+                <p className="text-xs text-slate-500">Orçado vs. Realizado por item</p>
               </div>
             </div>
-            <DesvioChart data={categoriasDesvio} />
+            {orcamentoItens.length > 0 && medicoes.length > 0 ? (
+              <DesvioChart itens={orcamentoItens} medicoes={medicoes} concluidoGeral={concluidoGeral} />
+            ) : (
+              <div className="text-center py-12 text-slate-400">
+                <p className="text-sm">Dados insuficientes para desvio.</p>
+                <p className="text-xs mt-1">Cadastre orçamento e medições para comparar.</p>
+              </div>
+            )}
           </div>
         ) : (
           <div className="bg-slate-50 rounded-2xl border border-slate-200 border-dashed p-6 flex flex-col items-center justify-center text-center">
             <Lock className="w-8 h-8 text-slate-300 mb-3" />
             <p className="text-sm font-semibold text-slate-500">Desvio de Orçamento</p>
-            <p className="text-xs text-slate-400 mt-1">Conteúdo financeiro restrito ao Diretor e Engenheiro</p>
+            <p className="text-xs text-slate-400 mt-1">Conteúdo financeiro restrito</p>
           </div>
         )}
       </div>
@@ -261,50 +375,75 @@ export default function Dashboard({ onSelectProjeto }: DashboardProps) {
       {/* Status das tarefas */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6">
         <h3 className="font-bold text-slate-800 mb-4">Status das Tarefas</h3>
-        <div className="space-y-3">
-          {tarefas.map((tarefa) => (
-            <div key={tarefa.id} className="flex items-center gap-4">
-              <div className="flex items-center gap-2 w-8">
-                {tarefa.percentual_concluido === 100 ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                ) : tarefa.percentual_concluido > 0 ? (
-                  <Clock className="w-5 h-5 text-amber-500" />
-                ) : (
-                  <AlertTriangle className="w-5 h-5 text-slate-300" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium text-slate-700 truncate">
-                    {tarefa.nome}
-                  </span>
-                  <span className="text-xs text-slate-500 ml-2 flex-shrink-0">
-                    {tarefa.percentual_concluido}%
-                  </span>
+        {tarefas.length === 0 ? (
+          <div className="text-center py-12 text-slate-400">
+            <Clock className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+            <p className="text-sm">Nenhuma tarefa cadastrada.</p>
+            <p className="text-xs mt-1">Crie tarefas na aba Planejamento para acompanhar o andamento.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {tarefas.map((tarefa) => (
+              <div key={tarefa.id} className="flex items-center gap-4">
+                <div className="flex items-center gap-2 w-8">
+                  {tarefa.percentual_concluido === 100 ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                  ) : tarefa.percentual_concluido > 0 ? (
+                    <Clock className="w-5 h-5 text-amber-500" />
+                  ) : (
+                    <AlertTriangle className="w-5 h-5 text-slate-300" />
+                  )}
                 </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      tarefa.percentual_concluido === 100
-                        ? 'bg-emerald-500'
-                        : tarefa.percentual_concluido > 0
-                        ? 'bg-amber-400'
-                        : 'bg-slate-300'
-                    }`}
-                    style={{ width: `${tarefa.percentual_concluido}%` }}
-                  />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium text-slate-700 truncate">{tarefa.nome}</span>
+                    <span className="text-xs text-slate-500 ml-2 flex-shrink-0">{tarefa.percentual_concluido}%</span>
+                  </div>
+                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        tarefa.percentual_concluido === 100
+                          ? 'bg-emerald-500'
+                          : tarefa.percentual_concluido > 0
+                          ? 'bg-amber-400'
+                          : 'bg-slate-300'
+                      }`}
+                      style={{ width: `${tarefa.percentual_concluido}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="hidden sm:block text-xs text-slate-400 w-24 text-right">
+                  {new Date(tarefa.data_inicio).toLocaleDateString('pt-BR')} -{' '}
+                  {new Date(tarefa.data_fim).toLocaleDateString('pt-BR')}
                 </div>
               </div>
-              <div className="hidden sm:block text-xs text-slate-400 w-24 text-right">
-                {new Date(tarefa.data_inicio).toLocaleDateString('pt-BR')} -{' '}
-                {new Date(tarefa.data_fim).toLocaleDateString('pt-BR')}
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* Última medição desvio */}
+      {ultimaMedicao && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-4">
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${desvioPontos >= 0 ? 'bg-emerald-50' : 'bg-rose-50'}`}>
+            {desvioPontos >= 0 ? <TrendingUp className="w-6 h-6 text-emerald-600" /> : <TrendingDown className="w-6 h-6 text-rose-500" />}
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-800">
+              Desvio: {desvioPontos >= 0 ? '+' : ''}{desvioPontos} pontos percentuais
+            </p>
+            <p className="text-xs text-slate-500">
+              Realizado {ultimaMedicao.percentual_realizado}% vs Previsto {ultimaMedicao.percentual_previsto}% em {new Date(ultimaMedicao.data).toLocaleDateString('pt-BR')}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function formatBR(value: number, decimals = 2): string {
+  return value.toLocaleString('pt-BR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 function RestrictedKpi({ label }: { label: string }) {
@@ -356,14 +495,12 @@ function KpiCard({
 
 function CurvaSChart({
   data,
-  max,
 }: {
   data: { data: string; previsto: number; realizado: number }[];
-  max: number;
 }) {
-  if (data.length === 0) return <p className="text-sm text-slate-400">Sem dados</p>;
   const width = 100;
   const height = 200;
+  const max = 100;
   const stepX = data.length > 1 ? width / (data.length - 1) : 0;
 
   const toPoints = (key: 'previsto' | 'realizado') =>
@@ -374,37 +511,11 @@ function CurvaSChart({
   return (
     <div className="relative">
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ height: '200px' }}>
-        {/* Grid lines */}
         {[0, 25, 50, 75, 100].map((v) => (
-          <line
-            key={v}
-            x1="0"
-            y1={height - (v / max) * height}
-            x2={width}
-            y2={height - (v / max) * height}
-            stroke="#f1f5f9"
-            strokeWidth="0.3"
-          />
+          <line key={v} x1="0" y1={height - (v / max) * height} x2={width} y2={height - (v / max) * height} stroke="#f1f5f9" strokeWidth="0.3" />
         ))}
-        {/* Previsto line */}
-        <polyline
-          points={toPoints('previsto')}
-          fill="none"
-          stroke="#3b82f6"
-          strokeWidth="1"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {/* Realizado line */}
-        <polyline
-          points={toPoints('realizado')}
-          fill="none"
-          stroke="#10b981"
-          strokeWidth="1"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {/* Points */}
+        <polyline points={toPoints('previsto')} fill="none" stroke="#3b82f6" strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" />
+        <polyline points={toPoints('realizado')} fill="none" stroke="#10b981" strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" />
         {data.map((d, i) => (
           <g key={i}>
             <circle cx={i * stepX} cy={height - (d.previsto / max) * height} r="0.8" fill="#3b82f6" />
@@ -424,58 +535,54 @@ function CurvaSChart({
 }
 
 function DesvioChart({
-  data,
+  itens,
+  medicoes,
+  concluidoGeral,
 }: {
-  data: { nome: string; orcado: number; realizado: number; desvio: number }[];
+  itens: OrcamentoItem[];
+  medicoes: Medicao[];
+  concluidoGeral: number;
 }) {
-  if (data.length === 0) return <p className="text-sm text-slate-400">Sem dados</p>;
-  const maxVal = Math.max(...data.map((d) => Math.max(d.orcado, d.realizado)), 1);
+  const maxVal = Math.max(...itens.map(i => i.quantidade * i.custo_unitario), 1);
 
   return (
     <div className="space-y-3">
-      {data.map((item, i) => (
-        <div key={i}>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-medium text-slate-600 truncate flex-1 mr-2">
-              {item.nome}
-            </span>
-            <span
-              className={`text-xs font-semibold flex-shrink-0 ${
-                item.desvio > 0 ? 'text-emerald-600' : 'text-rose-500'
-              }`}
-            >
-              {item.desvio > 0 ? '+' : ''}
-              {item.desvio.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
-            </span>
-          </div>
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 w-16 flex-shrink-0">Orçado</span>
-              <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-400 rounded-full"
-                  style={{ width: `${(item.orcado / maxVal) * 100}%` }}
-                />
-              </div>
-              <span className="text-xs text-slate-500 w-20 text-right">
-                R$ {item.orcado.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+      {itens.slice(0, 10).map((item) => {
+        const orcado = item.quantidade * item.custo_unitario;
+        const realizado = orcado * (concluidoGeral / 100);
+        const desvio = round2(orcado - realizado);
+        return (
+          <div key={item.id}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-medium text-slate-600 truncate flex-1 mr-2">
+                {item.descricao || item.composicao?.nome || 'Item'}
+              </span>
+              <span className={`text-xs font-semibold flex-shrink-0 ${desvio >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                {desvio >= 0 ? '+' : ''}{formatBRL(desvio)}
               </span>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 w-16 flex-shrink-0">Gasto</span>
-              <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-emerald-400 rounded-full"
-                  style={{ width: `${(item.realizado / maxVal) * 100}%` }}
-                />
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 w-16 flex-shrink-0">Orçado</span>
+                <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-400 rounded-full" style={{ width: `${(orcado / maxVal) * 100}%` }} />
+                </div>
+                <span className="text-xs text-slate-500 w-24 text-right">{formatBRL(orcado)}</span>
               </div>
-              <span className="text-xs text-slate-500 w-20 text-right">
-                R$ {item.realizado.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 w-16 flex-shrink-0">Realizado</span>
+                <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${(realizado / maxVal) * 100}%` }} />
+                </div>
+                <span className="text-xs text-slate-500 w-24 text-right">{formatBRL(realizado)}</span>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
+      {itens.length > 10 && (
+        <p className="text-xs text-slate-400 text-center pt-2">Mostrando 10 de {itens.length} itens</p>
+      )}
     </div>
   );
 }

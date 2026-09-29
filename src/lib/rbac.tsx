@@ -1,95 +1,207 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { supabase } from './supabase';
+import type { User } from '@supabase/supabase-js';
 
 export type Cargo = 'admin' | 'engenheiro' | 'mestre';
 
-export interface UsuarioSimulado {
+export interface Permissoes {
+  canManageUsers: boolean;
+  canManageProjetos: boolean;
+  canEditOrcamento: boolean;
+  canEditBdi: boolean;
+  canEditTarefas: boolean;
+  canEditProgress: boolean;
+  canCreateDiario: boolean;
+  canEditDiario: boolean;
+  canSeeFinancial: boolean;
+  canSeeBdi: boolean;
+  canAccessAssistente: boolean;
+}
+
+export interface UsuarioPerfil {
   id: string;
   nome: string;
+  email: string;
   cargo: Cargo;
+  auth_user_id: string | null;
 }
 
-export interface Permissoes {
-  canSeeFinancial: boolean;
-  canEditBdi: boolean;
-  canEditOrcamento: boolean;
-  canSeeOrcamentos: boolean;
-  canSeeInsumos: boolean;
-  canEditTarefas: boolean;
-  canUpdateProgress: boolean;
-  canSeeDiario: boolean;
-  canCreateDiario: boolean;
-  canSeeIA: boolean;
-}
-
-export const permissoesPorCargo: Record<Cargo, Permissoes> = {
+const permissoesByCargo: Record<Cargo, Permissoes> = {
   admin: {
-    canSeeFinancial: true,
-    canEditBdi: true,
+    canManageUsers: true,
+    canManageProjetos: true,
     canEditOrcamento: true,
-    canSeeOrcamentos: true,
-    canSeeInsumos: true,
+    canEditBdi: true,
     canEditTarefas: true,
-    canUpdateProgress: true,
-    canSeeDiario: true,
+    canEditProgress: true,
     canCreateDiario: true,
-    canSeeIA: true,
+    canEditDiario: true,
+    canSeeFinancial: true,
+    canSeeBdi: true,
+    canAccessAssistente: true,
   },
   engenheiro: {
-    canSeeFinancial: true,
-    canEditBdi: false,
+    canManageUsers: false,
+    canManageProjetos: true,
     canEditOrcamento: true,
-    canSeeOrcamentos: true,
-    canSeeInsumos: true,
+    canEditBdi: false,
     canEditTarefas: true,
-    canUpdateProgress: true,
-    canSeeDiario: true,
+    canEditProgress: true,
     canCreateDiario: true,
-    canSeeIA: true,
+    canEditDiario: true,
+    canSeeFinancial: true,
+    canSeeBdi: true,
+    canAccessAssistente: true,
   },
   mestre: {
-    canSeeFinancial: false,
-    canEditBdi: false,
+    canManageUsers: false,
+    canManageProjetos: false,
     canEditOrcamento: false,
-    canSeeOrcamentos: false,
-    canSeeInsumos: false,
+    canEditBdi: false,
     canEditTarefas: false,
-    canUpdateProgress: true,
-    canSeeDiario: true,
+    canEditProgress: true,
     canCreateDiario: true,
-    canSeeIA: false,
+    canEditDiario: true,
+    canSeeFinancial: false,
+    canSeeBdi: false,
+    canAccessAssistente: false,
   },
 };
 
-export const usuariosSimulados: UsuarioSimulado[] = [
-  { id: 'u-admin', nome: 'Carlos Diretor', cargo: 'admin' },
-  { id: 'u-eng', nome: 'Ana Engenheira', cargo: 'engenheiro' },
-  { id: 'u-mestre', nome: 'José Mestre', cargo: 'mestre' },
-];
-
-export const cargoLabel: Record<Cargo, string> = {
-  admin: 'Administrador / Diretor',
-  engenheiro: 'Engenheiro de Planejamento',
-  mestre: 'Mestre de Obras / Apontador',
-};
-
-export const cargoColor: Record<Cargo, string> = {
-  admin: 'bg-emerald-500',
-  engenheiro: 'bg-blue-500',
-  mestre: 'bg-amber-500',
-};
-
-export interface RbacContextValue {
-  usuario: UsuarioSimulado;
+interface RbacContextValue {
+  user: User | null;
+  perfil: UsuarioPerfil | null;
+  loading: boolean;
   permissoes: Permissoes;
-  setUsuario: (u: UsuarioSimulado) => void;
+  signOut: () => Promise<void>;
+  refreshPerfil: () => Promise<void>;
 }
 
-export type Page = 'dashboard' | 'obras' | 'orcamentos' | 'planejamento' | 'insumos' | 'diario' | 'ia';
+const RbacContext = createContext<RbacContextValue>({
+  user: null,
+  perfil: null,
+  loading: true,
+  permissoes: permissoesByCargo.mestre,
+  signOut: async () => {},
+  refreshPerfil: async () => {},
+});
 
-export const RbacContext = createContext<RbacContextValue | null>(null);
+export function RbacProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [perfil, setPerfil] = useState<UsuarioPerfil | null>(null);
+  const [loading, setLoading] = useState(true);
 
-export function useRbac(): RbacContextValue {
-  const ctx = useContext(RbacContext);
-  if (!ctx) throw new Error('useRbac must be used within RbacProvider');
-  return ctx;
+  const loadPerfil = useCallback(async (authUser: User) => {
+    const { data, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('auth_user_id', authUser.id)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Erro ao carregar perfil:', error.message);
+      setPerfil(null);
+      return;
+    }
+    if (data) {
+      setPerfil(data as UsuarioPerfil);
+    } else {
+      // Try matching by email
+      const { data: byEmail } = await supabase
+        .from('usuarios')
+        .select('*')
+        .eq('email', authUser.email || '')
+        .maybeSingle();
+      if (byEmail) {
+        // Link auth_user_id
+        await supabase.from('usuarios').update({ auth_user_id: authUser.id }).eq('id', byEmail.id);
+        setPerfil(byEmail as UsuarioPerfil);
+      } else {
+        setPerfil(null);
+      }
+    }
+  }, []);
+
+  const refreshPerfil = useCallback(async () => {
+    if (user) await loadPerfil(user);
+  }, [user, loadPerfil]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
+      if (session?.user) {
+        setUser(session.user);
+        loadPerfil(session.user).finally(() => mounted && setLoading(false));
+      } else {
+        setLoading(false);
+      }
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      if (session?.user) {
+        setUser(session.user);
+        loadPerfil(session.user).finally(() => mounted && setLoading(false));
+      } else {
+        setUser(null);
+        setPerfil(null);
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [loadPerfil]);
+
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setPerfil(null);
+  }, []);
+
+  const cargo: Cargo = perfil?.cargo || 'mestre';
+  const permissoes = permissoesByCargo[cargo];
+
+  return (
+    <RbacContext.Provider value={{ user, perfil, loading, permissoes, signOut, refreshPerfil }}>
+      {children}
+    </RbacContext.Provider>
+  );
 }
+
+export function useRbac() {
+  return useContext(RbacContext);
+}
+
+// Demo mode: simulated profiles for preview without real auth
+const demoPerfis: Record<string, UsuarioPerfil> = {
+  admin: {
+    id: 'demo-admin',
+    nome: 'Administrador (Demo)',
+    email: 'admin@demo.com',
+    cargo: 'admin',
+    auth_user_id: null,
+  },
+  engenheiro: {
+    id: 'demo-eng',
+    nome: 'Engenheiro (Demo)',
+    email: 'eng@demo.com',
+    cargo: 'engenheiro',
+    auth_user_id: null,
+  },
+  mestre: {
+    id: 'demo-mestre',
+    nome: 'Mestre de Obras (Demo)',
+    email: 'mestre@demo.com',
+    cargo: 'mestre',
+    auth_user_id: null,
+  },
+};
+
+export const demoMode = {
+  perfis: demoPerfis,
+};

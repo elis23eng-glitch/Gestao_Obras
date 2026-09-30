@@ -75,6 +75,8 @@ interface RbacContextValue {
   permissoes: Permissoes;
   signOut: () => Promise<void>;
   refreshPerfil: () => Promise<void>;
+  recoveryMode: boolean;
+  clearRecovery: () => void;
 }
 
 const RbacContext = createContext<RbacContextValue>({
@@ -84,12 +86,15 @@ const RbacContext = createContext<RbacContextValue>({
   permissoes: permissoesByCargo.mestre,
   signOut: async () => {},
   refreshPerfil: async () => {},
+  recoveryMode: false,
+  clearRecovery: () => {},
 });
 
 export function RbacProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [perfil, setPerfil] = useState<UsuarioPerfil | null>(null);
   const [loading, setLoading] = useState(true);
+  const [recoveryMode, setRecoveryMode] = useState(false);
 
   const loadPerfil = useCallback(async (authUser: User) => {
     const { data, error } = await supabase
@@ -129,8 +134,19 @@ export function RbacProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
+    // Detectar token de recuperação na URL antes de carregar a sessão
+    const hash = window.location.hash;
+    const isRecovery = hash && hash.includes('type=recovery');
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!mounted) return;
+      if (isRecovery && session?.user) {
+        // Modo recuperação: não carregar perfil, deixar Login mostrar o formulário de reset
+        setRecoveryMode(true);
+        setUser(session.user);
+        setLoading(false);
+        return;
+      }
       if (session?.user) {
         setUser(session.user);
         loadPerfil(session.user).finally(() => mounted && setLoading(false));
@@ -139,8 +155,15 @@ export function RbacProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
+      if (event === 'PASSWORD_RECOVERY' && session?.user) {
+        setRecoveryMode(true);
+        setUser(session.user);
+        setLoading(false);
+        return;
+      }
+      if (recoveryMode) return; // Ignorar outras mudanças enquanto estiver em modo recuperação
       if (session?.user) {
         setUser(session.user);
         loadPerfil(session.user).finally(() => mounted && setLoading(false));
@@ -155,7 +178,7 @@ export function RbacProvider({ children }: { children: ReactNode }) {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, [loadPerfil]);
+  }, [loadPerfil, recoveryMode]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
@@ -163,11 +186,19 @@ export function RbacProvider({ children }: { children: ReactNode }) {
     setPerfil(null);
   }, []);
 
+  const clearRecovery = useCallback(() => {
+    setRecoveryMode(false);
+    // Limpar o hash da URL
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
+
   const cargo: Cargo = perfil?.cargo || 'mestre';
   const permissoes = permissoesByCargo[cargo];
 
   return (
-    <RbacContext.Provider value={{ user, perfil, loading, permissoes, signOut, refreshPerfil }}>
+    <RbacContext.Provider value={{ user, perfil, loading, permissoes, signOut, refreshPerfil, recoveryMode, clearRecovery }}>
       {children}
     </RbacContext.Provider>
   );

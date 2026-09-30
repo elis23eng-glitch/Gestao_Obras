@@ -43,7 +43,7 @@ const cargoColor: Record<Cargo, string> = {
 };
 
 function AppContent() {
-  const { user, perfil, loading, permissoes, signOut, refreshPerfil } = useRbac();
+  const { user, perfil, loading, permissoes, signOut, refreshPerfil, recoveryMode, clearRecovery } = useRbac();
   const [page, setPage] = useState<Page>('dashboard');
   const [selectedProjetoId, setSelectedProjetoId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -82,6 +82,10 @@ function AppContent() {
         <Loader2 className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
+  }
+
+  if (recoveryMode) {
+    return <Login recoveryMode={true} onResetComplete={clearRecovery} />;
   }
 
   if (!user) {

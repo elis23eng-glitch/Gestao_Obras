@@ -15,7 +15,7 @@ import {
   Network,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useRbac } from '@/lib/rbac';
+import { useRbac } from '@/lib/rbac-context';
 import { parseBR, formatBR, formatBRL, custoDireto as calcCustoDireto, valorBdi, precoVenda } from '@/lib/calc';
 import { parseMsProjectXml, msProjectTasksToImport, parseSinapiCsv, type MsProjectTask, type SinapiRow, type TarefaImport } from '@/lib/import-parsers';
 import type { Projeto, Orcamento, OrcamentoItem, EapItem, Insumo, Tarefa } from '@/types/database';

@@ -1,108 +1,27 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { supabase } from './supabase';
 import type { User } from '@supabase/supabase-js';
-
-export type Cargo = 'admin' | 'engenheiro' | 'mestre';
-
-export interface Permissoes {
-  canManageUsers: boolean;
-  canManageProjetos: boolean;
-  canEditOrcamento: boolean;
-  canEditBdi: boolean;
-  canEditTarefas: boolean;
-  canEditProgress: boolean;
-  canCreateDiario: boolean;
-  canEditDiario: boolean;
-  canSeeFinancial: boolean;
-  canSeeBdi: boolean;
-  canAccessAssistente: boolean;
-}
-
-export interface UsuarioPerfil {
-  id: string;
-  nome: string;
-  email: string;
-  cargo: Cargo;
-  auth_user_id: string | null;
-}
-
-const permissoesByCargo: Record<Cargo, Permissoes> = {
-  admin: {
-    canManageUsers: true,
-    canManageProjetos: true,
-    canEditOrcamento: true,
-    canEditBdi: true,
-    canEditTarefas: true,
-    canEditProgress: true,
-    canCreateDiario: true,
-    canEditDiario: true,
-    canSeeFinancial: true,
-    canSeeBdi: true,
-    canAccessAssistente: true,
-  },
-  engenheiro: {
-    canManageUsers: false,
-    canManageProjetos: true,
-    canEditOrcamento: true,
-    canEditBdi: false,
-    canEditTarefas: true,
-    canEditProgress: true,
-    canCreateDiario: true,
-    canEditDiario: true,
-    canSeeFinancial: true,
-    canSeeBdi: true,
-    canAccessAssistente: true,
-  },
-  mestre: {
-    canManageUsers: false,
-    canManageProjetos: false,
-    canEditOrcamento: false,
-    canEditBdi: false,
-    canEditTarefas: false,
-    canEditProgress: true,
-    canCreateDiario: true,
-    canEditDiario: true,
-    canSeeFinancial: false,
-    canSeeBdi: false,
-    canAccessAssistente: false,
-  },
-};
-
-interface RbacContextValue {
-  user: User | null;
-  perfil: UsuarioPerfil | null;
-  loading: boolean;
-  permissoes: Permissoes;
-  signOut: () => Promise<void>;
-  refreshPerfil: () => Promise<void>;
-  recoveryMode: boolean;
-  clearRecovery: () => void;
-}
-
-const RbacContext = createContext<RbacContextValue>({
-  user: null,
-  perfil: null,
-  loading: true,
-  permissoes: permissoesByCargo.mestre,
-  signOut: async () => {},
-  refreshPerfil: async () => {},
-  recoveryMode: false,
-  clearRecovery: () => {},
-});
+import { RbacContext, permissoesByCargo, type Cargo, type UsuarioPerfil } from './rbac-context';
 
 export function RbacProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [perfil, setPerfil] = useState<UsuarioPerfil | null>(null);
   const [loading, setLoading] = useState(true);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const authUserIdRef = useRef<string | null>(null);
+  const profileRequestRef = useRef(0);
+  const invalidateProfileRequests = useCallback(() => { ++profileRequestRef.current; }, []);
 
   const loadPerfil = useCallback(async (authUser: User) => {
+    const request = ++profileRequestRef.current;
     const { data, error } = await supabase
       .from('usuarios')
       .select('*')
       .eq('auth_user_id', authUser.id)
+      .eq('ativo', true)
       .maybeSingle();
 
+    if (request !== profileRequestRef.current) return;
     if (error) {
       console.error('Erro ao carregar perfil:', error.message);
       setPerfil(null);
@@ -111,19 +30,14 @@ export function RbacProvider({ children }: { children: ReactNode }) {
     if (data) {
       setPerfil(data as UsuarioPerfil);
     } else {
-      // Try matching by email
-      const { data: byEmail } = await supabase
-        .from('usuarios')
-        .select('*')
-        .eq('email', authUser.email || '')
-        .maybeSingle();
-      if (byEmail) {
-        // Link auth_user_id
-        await supabase.from('usuarios').update({ auth_user_id: authUser.id }).eq('id', byEmail.id);
-        setPerfil(byEmail as UsuarioPerfil);
-      } else {
-        setPerfil(null);
-      }
+      // Only the verified Auth email may link an administrator-created profile.
+      const { error: linkError } = await supabase.rpc('link_my_profile');
+      if (request !== profileRequestRef.current) return;
+      if (linkError) { console.error('Erro ao vincular perfil:', linkError.message); setPerfil(null); return; }
+      const { data: linked, error: profileError } = await supabase.from('usuarios')
+        .select('*').eq('auth_user_id', authUser.id).eq('ativo', true).maybeSingle();
+      if (request !== profileRequestRef.current) return;
+      setPerfil(profileError ? null : linked as UsuarioPerfil | null);
     }
   }, []);
 
@@ -148,8 +62,9 @@ export function RbacProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (session?.user) {
+        authUserIdRef.current = session.user.id;
         setUser(session.user);
-        loadPerfil(session.user).finally(() => mounted && setLoading(false));
+        loadPerfil(session.user).finally(() => mounted && authUserIdRef.current === session.user.id && setLoading(false));
       } else {
         setLoading(false);
       }
@@ -165,9 +80,16 @@ export function RbacProvider({ children }: { children: ReactNode }) {
       }
       if (recoveryMode) return; // Ignorar outras mudanças enquanto estiver em modo recuperação
       if (session?.user) {
+        const userChanged = authUserIdRef.current !== session.user.id;
+        authUserIdRef.current = session.user.id;
         setUser(session.user);
-        loadPerfil(session.user).finally(() => mounted && setLoading(false));
+        if (userChanged) { setLoading(true); setPerfil(null); }
+        setTimeout(() => {
+          if (mounted) loadPerfil(session.user).finally(() => mounted && authUserIdRef.current === session.user.id && setLoading(false));
+        }, 0);
       } else {
+        authUserIdRef.current = null;
+        ++profileRequestRef.current;
         setUser(null);
         setPerfil(null);
         setLoading(false);
@@ -176,11 +98,14 @@ export function RbacProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
+      invalidateProfileRequests();
       sub.subscription.unsubscribe();
     };
-  }, [loadPerfil, recoveryMode]);
+  }, [loadPerfil, recoveryMode, invalidateProfileRequests]);
 
   const signOut = useCallback(async () => {
+    ++profileRequestRef.current;
+    authUserIdRef.current = null;
     await supabase.auth.signOut();
     setUser(null);
     setPerfil(null);
@@ -203,36 +128,3 @@ export function RbacProvider({ children }: { children: ReactNode }) {
     </RbacContext.Provider>
   );
 }
-
-export function useRbac() {
-  return useContext(RbacContext);
-}
-
-// Demo mode: simulated profiles for preview without real auth
-const demoPerfis: Record<string, UsuarioPerfil> = {
-  admin: {
-    id: 'demo-admin',
-    nome: 'Administrador (Demo)',
-    email: 'admin@demo.com',
-    cargo: 'admin',
-    auth_user_id: null,
-  },
-  engenheiro: {
-    id: 'demo-eng',
-    nome: 'Engenheiro (Demo)',
-    email: 'eng@demo.com',
-    cargo: 'engenheiro',
-    auth_user_id: null,
-  },
-  mestre: {
-    id: 'demo-mestre',
-    nome: 'Mestre de Obras (Demo)',
-    email: 'mestre@demo.com',
-    cargo: 'mestre',
-    auth_user_id: null,
-  },
-};
-
-export const demoMode = {
-  perfis: demoPerfis,
-};

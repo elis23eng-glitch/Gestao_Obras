@@ -14,7 +14,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useRbac } from '@/lib/rbac';
+import { useRbac } from '@/lib/rbac-context';
 import { parseBR, formatBR, formatBRL, round2, custoComposicao, custoDireto as calcCustoDireto, valorBdi, precoVenda } from '@/lib/calc';
 import type { Projeto, EapItem, Orcamento, OrcamentoItem, Composicao, ComposicaoInsumo } from '@/types/database';
 
@@ -148,12 +148,12 @@ export default function Orcamentos({ selectedProjetoId, onSelectProjeto }: Orcam
     if (orcamento) return orcamento;
     const { data, error: err } = await supabase
       .from('orcamentos')
-      .insert({ projeto_id: projId, nome: 'Orçamento Principal', bdi_taxa: 0, status: 'rascunho' })
+      .insert({ projeto_id: projId, nome: 'Orçamento Principal', status: 'rascunho' })
       .select('*')
       .single();
     if (err) { setSaveError(err.message); return null; }
     setOrcamento(data as Orcamento);
-    setBdiInput('0');
+    setBdiInput(String(data.bdi_taxa));
     return data as Orcamento;
   };
 

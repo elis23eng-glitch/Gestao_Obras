@@ -10,6 +10,7 @@ export function RbacProvider({ children }: { children: ReactNode }) {
   const [recoveryMode, setRecoveryMode] = useState(false);
   const authUserIdRef = useRef<string | null>(null);
   const profileRequestRef = useRef(0);
+  const invalidateProfileRequests = useCallback(() => { ++profileRequestRef.current; }, []);
 
   const loadPerfil = useCallback(async (authUser: User) => {
     const request = ++profileRequestRef.current;
@@ -97,10 +98,10 @@ export function RbacProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
-      ++profileRequestRef.current;
+      invalidateProfileRequests();
       sub.subscription.unsubscribe();
     };
-  }, [loadPerfil, recoveryMode]);
+  }, [loadPerfil, recoveryMode, invalidateProfileRequests]);
 
   const signOut = useCallback(async () => {
     ++profileRequestRef.current;

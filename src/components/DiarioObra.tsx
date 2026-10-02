@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BookOpen, Plus, X, Cloud, Users, AlertTriangle, FileText, Calendar, Loader2, AlertCircle, User } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useRbac } from '@/lib/rbac';
+import { useRbac } from '@/lib/rbac-context';
 import type { Projeto, DiarioObra } from '@/types/database';
-import type { UsuarioPerfil } from '@/lib/rbac';
+import type { UsuarioPerfil } from '@/lib/rbac-context';
 
 interface DiarioObraProps {
   selectedProjetoId: string | null;
@@ -24,10 +24,10 @@ export default function DiarioObra({ selectedProjetoId, onSelectProjeto }: Diari
   const reqRef = useRef(0);
 
   const fetchProjetos = useCallback(async () => {
-    const { data, error: err } = await supabase.from('projetos').select('*').order('created_at', { ascending: false });
+    const { data, error: err } = await supabase.from(permissoes.canSeeFinancial ? 'projetos' : 'projetos_mestre').select('*').order('created_at', { ascending: false });
     if (err) { setError(err.message); return; }
     setProjetos((data as Projeto[]) || []);
-  }, []);
+  }, [permissoes.canSeeFinancial]);
 
   useEffect(() => {
     fetchProjetos();
@@ -39,7 +39,7 @@ export default function DiarioObra({ selectedProjetoId, onSelectProjeto }: Diari
     setError(null);
 
     const [projRes, diarRes] = await Promise.all([
-      supabase.from('projetos').select('*').eq('id', projId).maybeSingle(),
+      supabase.from(permissoes.canSeeFinancial ? 'projetos' : 'projetos_mestre').select('*').eq('id', projId).maybeSingle(),
       supabase
         .from('diario_obra')
         .select('*, usuario:usuarios(*)')
@@ -49,11 +49,12 @@ export default function DiarioObra({ selectedProjetoId, onSelectProjeto }: Diari
 
     if (currentReq !== reqRef.current) return;
 
-    if (projRes.error) { setError(projRes.error.message); setLoading(false); return; }
+    const loadError = projRes.error || diarRes.error;
+    if (loadError) { setError(loadError.message); setLoading(false); return; }
     setProjeto(projRes.data as Projeto);
     setRegistros((diarRes.data as (DiarioObra & { usuario?: UsuarioPerfil })[]) || []);
     setLoading(false);
-  }, []);
+  }, [permissoes.canSeeFinancial]);
 
   useEffect(() => {
     if (selectedProjetoId) {

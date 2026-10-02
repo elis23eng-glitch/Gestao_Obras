@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -14,7 +14,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useRbac } from '@/lib/rbac';
+import { useRbac } from '@/lib/rbac-context';
 import { formatBRL, round2, precoVenda as calcPrecoVenda, custoDireto as calcCustoDireto, avançoFisico, daysBetween } from '@/lib/calc';
 import type { Projeto, Medicao, Tarefa, OrcamentoItem, Orcamento } from '@/types/database';
 
@@ -33,13 +33,14 @@ export default function Dashboard({ selectedProjetoId, onSelectProjeto }: Dashbo
   const [orcamento, setOrcamento] = useState<Orcamento | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reqId, setReqId] = useState(0);
+  const reqRef = useRef(0);
+  const invalidateRequests = useCallback(() => { ++reqRef.current; }, []);
 
   const fetchProjetos = useCallback(async () => {
-    const { data, error: err } = await supabase.from('projetos').select('*').order('created_at', { ascending: false });
+    const { data, error: err } = await supabase.from(permissoes.canSeeFinancial ? 'projetos' : 'projetos_mestre').select('*').order('created_at', { ascending: false });
     if (err) { setError(err.message); return; }
     setProjetos((data as Projeto[]) || []);
-  }, []);
+  }, [permissoes.canSeeFinancial]);
 
   useEffect(() => {
     fetchProjetos();
@@ -50,38 +51,39 @@ export default function Dashboard({ selectedProjetoId, onSelectProjeto }: Dashbo
     setError(null);
 
     const [projRes, medRes, tarRes, orcRes] = await Promise.all([
-      supabase.from('projetos').select('*').eq('id', projId).maybeSingle(),
-      supabase.from('medicoes').select('*').eq('projeto_id', projId).order('data', { ascending: true }),
-      supabase.from('tarefas').select('*').eq('projeto_id', projId).order('data_inicio', { ascending: true }),
-      supabase.from('orcamentos').select('*').eq('projeto_id', projId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from(permissoes.canSeeFinancial ? 'projetos' : 'projetos_mestre').select('*').eq('id', projId).maybeSingle(),
+      permissoes.canSeeFinancial ? supabase.from('medicoes').select('*').eq('projeto_id', projId).order('data', { ascending: true }) : Promise.resolve({ data: [], error: null }),
+      supabase.from(permissoes.canSeeFinancial ? 'tarefas' : 'tarefas_mestre').select('*').eq('projeto_id', projId).order('data_inicio', { ascending: true }),
+      permissoes.canSeeFinancial ? supabase.from('orcamentos').select('*').eq('projeto_id', projId).order('created_at', { ascending: false }).limit(1).maybeSingle() : Promise.resolve({ data: null, error: null }),
     ]);
 
-    if (currentReqId !== reqId) return;
+    if (currentReqId !== reqRef.current) return;
 
-    if (projRes.error) { setError(projRes.error.message); setLoading(false); return; }
+    const loadError = projRes.error || medRes.error || tarRes.error || orcRes.error;
+    if (loadError) { setError(loadError.message); setLoading(false); return; }
     setProjeto(projRes.data as Projeto);
     setMedicoes((medRes.data as Medicao[]) || []);
     setTarefas((tarRes.data as Tarefa[]) || []);
     setOrcamento((orcRes.data as Orcamento) || null);
 
     if (orcRes.data) {
-      const { data: itensData } = await supabase
+      const { data: itensData, error: itensError } = await supabase
         .from('orcamento_itens')
         .select('*, eap_item:eap_itens(*), composicao:composicoes(*)')
         .eq('orcamento_id', orcRes.data.id);
-      if (currentReqId !== reqId) return;
+      if (currentReqId !== reqRef.current) return;
+      if (itensError) { setError(itensError.message); setLoading(false); return; }
       setOrcamentoItens((itensData as OrcamentoItem[]) || []);
     } else {
       setOrcamentoItens([]);
     }
 
     setLoading(false);
-  }, [reqId]);
+  }, [permissoes.canSeeFinancial]);
 
   useEffect(() => {
     if (selectedProjetoId) {
-      const newReqId = reqId + 1;
-      setReqId(newReqId);
+      const newReqId = ++reqRef.current;
       setProjeto(null);
       setMedicoes([]);
       setTarefas([]);
@@ -92,12 +94,12 @@ export default function Dashboard({ selectedProjetoId, onSelectProjeto }: Dashbo
       setProjeto(null);
       setLoading(false);
     }
-  }, [selectedProjetoId]);
+    return invalidateRequests;
+  }, [selectedProjetoId, fetchProjetoData, invalidateRequests]);
 
   const handleRetry = () => {
     if (selectedProjetoId) {
-      const newReqId = reqId + 1;
-      setReqId(newReqId);
+      const newReqId = ++reqRef.current;
       fetchProjetoData(selectedProjetoId, newReqId);
     } else {
       fetchProjetos();

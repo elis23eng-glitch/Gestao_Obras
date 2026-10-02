@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CalendarRange, Link2, Plus, X, ArrowRightCircle, Lock, Loader2, Check, AlertCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useRbac } from '@/lib/rbac';
+import { useRbac } from '@/lib/rbac-context';
 import { parseBR, formatBRL, ganttPosition, ganttWidth, daysBetween } from '@/lib/calc';
 import type { Projeto, Tarefa } from '@/types/database';
 
@@ -32,10 +32,10 @@ export default function Planejamento({ selectedProjetoId, onSelectProjeto }: Pla
   const reqRef = useRef(0);
 
   const fetchProjetos = useCallback(async () => {
-    const { data, error: err } = await supabase.from('projetos').select('*').order('created_at', { ascending: false });
+    const { data, error: err } = await supabase.from(permissoes.canSeeFinancial ? 'projetos' : 'projetos_mestre').select('*').order('created_at', { ascending: false });
     if (err) { setError(err.message); return; }
     setProjetos((data as Projeto[]) || []);
-  }, []);
+  }, [permissoes.canSeeFinancial]);
 
   useEffect(() => {
     fetchProjetos();
@@ -47,18 +47,19 @@ export default function Planejamento({ selectedProjetoId, onSelectProjeto }: Pla
     setError(null);
 
     const [projRes, tarRes] = await Promise.all([
-      supabase.from('projetos').select('*').eq('id', projId).maybeSingle(),
-      supabase.from('tarefas').select('*').eq('projeto_id', projId).order('data_inicio', { ascending: true }),
+      supabase.from(permissoes.canSeeFinancial ? 'projetos' : 'projetos_mestre').select('*').eq('id', projId).maybeSingle(),
+      supabase.from(permissoes.canSeeFinancial ? 'tarefas' : 'tarefas_mestre').select('*').eq('projeto_id', projId).order('data_inicio', { ascending: true }),
     ]);
 
     if (currentReq !== reqRef.current) return;
 
-    if (projRes.error) { setError(projRes.error.message); setLoading(false); return; }
+    const loadError = projRes.error || tarRes.error;
+    if (loadError) { setError(loadError.message); setLoading(false); return; }
     setProjeto(projRes.data as Projeto);
     setTarefas((tarRes.data as Tarefa[]) || []);
     setProgressDrafts({});
     setLoading(false);
-  }, []);
+  }, [permissoes.canSeeFinancial]);
 
   useEffect(() => {
     if (selectedProjetoId) {
@@ -125,7 +126,7 @@ export default function Planejamento({ selectedProjetoId, onSelectProjeto }: Pla
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
-      const { error: err } = await supabase.from('tarefas').update({ percentual_concluido: clamped }).eq('id', id);
+      const { error: err } = await supabase.rpc('update_task_progress', { p_tarefa_id: id, p_percentual: clamped });
       if (err) {
         setError('Erro ao salvar progresso: ' + err.message);
       } else {
@@ -140,7 +141,7 @@ export default function Planejamento({ selectedProjetoId, onSelectProjeto }: Pla
   // Cleanup on unmount
   useEffect(() => {
     return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
-  }, []);
+  }, [permissoes.canSeeFinancial]);
 
   // Check for date conflicts with dependencies
   const checkDependencyConflict = (tarefa: Tarefa): string | null => {

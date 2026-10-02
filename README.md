@@ -64,32 +64,53 @@ As migrações estão em `supabase/migrations/` e devem ser aplicadas na ordem:
 2. `20260926030032_seed_construction_data.sql` — dados de demonstração
 3. `20260926030945_add_rbac_usuarios_diario.sql` — RBAC inicial
 4. `20260928173642_20260928010000_auth_rbac_project_access.sql` — auth real, RLS por acesso, audit log
+5. `20260929225100_20260929010000_bootstrap_first_admin.sql` — primeiro acesso
+6. `20261002035726_harden_rbac_and_first_access.sql` — proteção financeira, BDI, vinculação de perfis e obras
 
 ### Primeiro Administrador
 
-Para configurar o primeiro admin:
+1. Aplique todas as migrações antes de publicar o frontend.
+2. Crie sua conta, confirme o e-mail e entre na aplicação.
+3. Na tela "Perfil não vinculado", clique em "Tornar-se Administrador".
 
-1. Crie uma conta via a tela de login (modo "Criar Conta")
-2. Acesse o banco de dados via Supabase Studio ou SQL
-3. Vincule o auth_user_id ao perfil existente ou crie um novo:
+O primeiro administrador precisa de e-mail confirmado no Supabase Auth. Perfis
+fictícios sem `auth_user_id` não bloqueiam a configuração; um administrador já
+vinculado bloqueia novas promoções. As chamadas de primeiro acesso são
+serializadas no banco. Se o administrador estiver desativado, sua recuperação
+precisa ser feita pelo responsável pelo banco; o bootstrap não reabre.
 
-```sql
--- Se já existe um usuário admin na tabela usuarios:
-UPDATE usuarios SET auth_user_id = '<uuid-do-auth-users>'
-WHERE email = 'seu@email.com';
+Depois, o administrador pode cadastrar perfis na tabela `usuarios` com o e-mail
+e cargo corretos. Ao entrar com esse e-mail confirmado, o usuário é vinculado
+pela função `link_my_profile()`. O cliente não pode alterar seu cargo, identidade
+ou estado de ativação. Associações de acesso continuam em `projeto_usuarios`.
+Obras criadas na aplicação são automaticamente vinculadas a seu criador.
 
--- Ou crie um novo:
-INSERT INTO usuarios (nome, email, cargo, auth_user_id)
-VALUES ('Admin', 'seu@email.com', 'admin', '<uuid-do-auth-users>');
-```
+### Atualizar uma instalação existente
 
-4. Associe obras ao admin:
+Aplique **somente as migrações pendentes**, incluindo a sexta migração acima,
+antes de publicar esta versão. Não execute novamente o seed em um banco com
+dados reais. A migração preserva os dados e vínculos existentes.
 
-```sql
-INSERT INTO projeto_usuarios (projeto_id, usuario_id)
-SELECT p.id, u.id FROM projetos p, usuarios u
-WHERE u.email = 'seu@email.com';
-```
+Use o fluxo de migrações do Supabase CLI no projeto vinculado ou execute o SQL
+da migração pendente pelo SQL Editor do projeto correto. Configure
+`VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` no ambiente de publicação e gere
+um novo build. A chave deve ser pública (publishable/anon), nunca `service_role`.
+
+### Permissões garantidas no banco
+
+- Administrador: acesso completo, inclusive definição do BDI.
+- Engenheiro: dados financeiros e alterações de orçamento/cronograma nas obras
+  vinculadas; novos orçamentos usam o BDI padrão de 25%, ajustável pelo admin.
+- Mestre: dados operacionais das obras vinculadas pelas views `projetos_mestre`
+  e `tarefas_mestre`; sem valores de contrato, custos, BDI ou valores de tarefas.
+  O progresso é salvo exclusivamente pela RPC `update_task_progress`.
+- Perfis desativados e contas sem perfil ativo não recebem acesso às obras.
+
+As views são `security_invoker`. Seus leitores privados usam permissões
+restritas, validam a identidade e o acesso à obra e retornam apenas as colunas
+operacionais. O valor previsto da tarefa é substituído por zero nessa leitura,
+portanto o avanço mostrado para o mestre é calculado sem pesos financeiros.
+O schema `private` deve permanecer fora dos schemas expostos pela Data API.
 
 ## Scripts
 
@@ -99,6 +120,7 @@ npm run build      # Build de produção
 npm run preview    # Preview do build
 npm run typecheck  # Verificação de tipos TypeScript
 npm run lint       # ESLint
+npm test           # Regressões de permissões e migrações em PostgreSQL isolado
 ```
 
 ## Importação e Exportação
@@ -127,14 +149,14 @@ Na aba "Planejamento", conflitos de datas entre tarefas e suas dependências sã
 - Reagendar automaticamente: o início da tarefa é ajustado para o dia seguinte do término da dependência, preservando a duração original
 - Reagendar todas de uma vez com o botão "Reagendar Todas"
 
-## Bootstrap do Primeiro Administrador
+## Validação automatizada
 
-Quando o primeiro usuário autentica e ainda não tem perfil vinculado, a tela oferece um botão "Tornar-se Administrador". Esse botão chama a função `bootstrap_first_admin()` no banco, que:
-
-1. Verifica se já existe algum admin. Se sim, recusa.
-2. Se não há admin, vincula o usuário autenticado como admin (cria ou promove o perfil).
-
-Isso impede autoelevação pública após o primeiro admin estar configurado.
+O GitHub Actions usa Node.js 22 e executa instalação pelo lockfile, lint sem
+avisos, TypeScript, testes de segurança e build. `npm test` cria um banco
+PostgreSQL isolado com PGlite, aplica todas as migrações e verifica permissões
+permitidas e negadas, bootstrap, BDI, vínculos e auditoria. Os testes não se
+conectam ao Supabase de produção nem substituem a validação do Auth e da Data API
+no ambiente publicado.
 
 ## Limitações
 

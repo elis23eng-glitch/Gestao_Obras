@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Building2, MapPin, Calendar, Plus, ArrowRight, X, User } from 'lucide-react';
+import { useRbac } from '@/lib/rbac-context';
 import { supabase } from '@/lib/supabase';
 import type { Projeto } from '@/types/database';
 
@@ -16,6 +17,9 @@ const statusConfig: Record<Projeto['status'], { label: string; color: string; do
 };
 
 export default function Obras({ onSelectProjeto }: ObrasProps) {
+  const { permissoes } = useRbac();
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [projetos, setProjetos] = useState<Projeto[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -30,29 +34,41 @@ export default function Obras({ onSelectProjeto }: ObrasProps) {
 
   const fetchProjetos = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('projetos')
+    setError(null);
+    const { data, error: err } = await supabase
+      .from(permissoes.canSeeFinancial ? 'projetos' : 'projetos_mestre')
       .select('*')
       .order('created_at', { ascending: false });
+    if (err) { setError(err.message); setLoading(false); return; }
     setProjetos((data as Projeto[]) || []);
     setLoading(false);
-  }, []);
+  }, [permissoes.canSeeFinancial]);
 
   useEffect(() => {
     fetchProjetos();
   }, [fetchProjetos]);
 
   const handleCreate = async () => {
-    if (!form.nome || !form.cliente) return;
-    await supabase.from('projetos').insert({
-      nome: form.nome,
-      cliente: form.cliente,
+    if (!permissoes.canManageProjetos || saving) return;
+    setError(null);
+    if (!form.nome.trim() || !form.cliente.trim()) { setError('Preencha nome e cliente.'); return; }
+    const valor = form.valor_contrato ? Number(form.valor_contrato) : 0;
+    if (!Number.isFinite(valor) || valor < 0) { setError('Valor do contrato inválido.'); return; }
+    if (form.data_inicio && form.data_termino && form.data_termino < form.data_inicio) {
+      setError('A data final não pode ser anterior à inicial.'); return;
+    }
+    setSaving(true);
+    const { error: err } = await supabase.from('projetos').insert({
+      nome: form.nome.trim(),
+      cliente: form.cliente.trim(),
       endereco: form.endereco || null,
       data_inicio: form.data_inicio || null,
       data_termino: form.data_termino || null,
-      valor_contrato: form.valor_contrato ? parseFloat(form.valor_contrato) : 0,
+      valor_contrato: valor,
       status: 'planejamento',
     });
+    setSaving(false);
+    if (err) { setError(err.message); return; }
     setShowModal(false);
     setForm({ nome: '', cliente: '', endereco: '', data_inicio: '', data_termino: '', valor_contrato: '' });
     fetchProjetos();
@@ -68,17 +84,18 @@ export default function Obras({ onSelectProjeto }: ObrasProps) {
 
   return (
     <div className="space-y-6">
+      {error && <p role="alert" className="text-sm text-rose-600">{error}</p>}
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-500">
           {projetos.length} {projetos.length === 1 ? 'obra cadastrada' : 'obras cadastradas'}
         </p>
-        <button
-          onClick={() => setShowModal(true)}
+        {permissoes.canManageProjetos && <button
+          onClick={() => { setError(null); setShowModal(true); }}
           className="flex items-center gap-2 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-semibold transition-colors"
         >
           <Plus className="w-4 h-4" />
           Nova Obra
-        </button>
+        </button>}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
@@ -142,18 +159,18 @@ export default function Obras({ onSelectProjeto }: ObrasProps) {
         <div className="text-center py-20">
           <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-4" />
           <p className="text-slate-500 mb-4">Nenhuma obra cadastrada ainda.</p>
-          <button
-            onClick={() => setShowModal(true)}
+          {permissoes.canManageProjetos && <button
+            onClick={() => { setError(null); setShowModal(true); }}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-semibold"
           >
             <Plus className="w-4 h-4" />
             Criar primeira obra
-          </button>
+          </button>}
         </div>
       )}
 
       {/* Modal Nova Obra */}
-      {showModal && (
+      {showModal && permissoes.canManageProjetos && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6">
             <div className="flex items-center justify-between mb-6">
@@ -163,6 +180,7 @@ export default function Obras({ onSelectProjeto }: ObrasProps) {
               </button>
             </div>
             <div className="space-y-4">
+              {error && <p role="alert" className="text-sm text-rose-600">{error}</p>}
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1.5">Nome da Obra *</label>
                 <input
@@ -233,10 +251,10 @@ export default function Obras({ onSelectProjeto }: ObrasProps) {
               </button>
               <button
                 onClick={handleCreate}
-                disabled={!form.nome || !form.cliente}
+                disabled={saving || !form.nome.trim() || !form.cliente.trim()}
                 className="flex-1 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold"
               >
-                Criar Obra
+                {saving ? 'Salvando...' : 'Criar Obra'}
               </button>
             </div>
           </div>

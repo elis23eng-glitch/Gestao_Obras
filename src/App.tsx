@@ -25,7 +25,8 @@ import DiarioObra from '@/components/DiarioObra';
 import AssistenteIA from '@/components/AssistenteIA';
 import Login from '@/components/Login';
 import ImportExport from '@/components/ImportExport';
-import { RbacProvider, useRbac, type Cargo } from '@/lib/rbac';
+import { RbacProvider } from '@/lib/rbac';
+import { useRbac, type Cargo } from '@/lib/rbac-context';
 import { supabase } from '@/lib/supabase';
 
 type Page = 'dashboard' | 'obras' | 'orcamentos' | 'planejamento' | 'insumos' | 'diario' | 'ia' | 'import-export';
@@ -64,10 +65,12 @@ function AppContent() {
   useEffect(() => {
     if (page === 'orcamentos' && !permissoes.canEditOrcamento && !permissoes.canSeeFinancial) setPage('dashboard');
     if (page === 'insumos' && !permissoes.canManageProjetos) setPage('dashboard');
+    if (page === 'import-export' && !permissoes.canManageProjetos) setPage('dashboard');
     if (page === 'ia' && !permissoes.canAccessAssistente) setPage('dashboard');
   }, [permissoes, page]);
 
   const handleSelectProjeto = (id: string) => {
+    if (!id) { setSelectedProjetoId(null); setPage('obras'); return; }
     setSelectedProjetoId(id);
     if (permissoes.canSeeFinancial || permissoes.canEditOrcamento) {
       setPage('orcamentos');
@@ -147,7 +150,7 @@ function AppContent() {
             </button>
           </div>
           <p className="text-xs text-slate-400 mt-4">
-            O botão "Tornar-se Administrador" só funciona se não houver nenhum admin cadastrado.
+            O botão "Tornar-se Administrador" só funciona se não houver nenhum administrador vinculado a uma conta.
           </p>
         </div>
       </div>

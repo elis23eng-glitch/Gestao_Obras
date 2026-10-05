@@ -5,6 +5,7 @@ import {
   Calculator,
   CalendarRange,
   Package,
+  ShoppingCart,
   HardHat,
   BookOpen,
   Shield,
@@ -21,6 +22,7 @@ import Obras from '@/components/Obras';
 import Orcamentos from '@/components/Orcamentos';
 import Planejamento from '@/components/Planejamento';
 import Insumos from '@/components/Insumos';
+import Compras from '@/components/Compras';
 import DiarioObra from '@/components/DiarioObra';
 import AssistenteIA from '@/components/AssistenteIA';
 import Login from '@/components/Login';
@@ -28,7 +30,7 @@ import ImportExport from '@/components/ImportExport';
 import { RbacProvider, useRbac, type Cargo } from '@/lib/rbac';
 import { supabase } from '@/lib/supabase';
 
-type Page = 'dashboard' | 'obras' | 'orcamentos' | 'planejamento' | 'insumos' | 'diario' | 'ia' | 'import-export';
+type Page = 'dashboard' | 'obras' | 'orcamentos' | 'planejamento' | 'insumos' | 'compras' | 'diario' | 'ia' | 'import-export';
 
 const cargoLabel: Record<Cargo, string> = {
   admin: 'Administrador',
@@ -74,6 +76,11 @@ function AppContent() {
     } else {
       setPage('planejamento');
     }
+  };
+
+  const handlePlanejarCompras = (id: string) => {
+    setSelectedProjetoId(id);
+    setPage('compras');
   };
 
   if (loading) {
@@ -160,6 +167,7 @@ function AppContent() {
     { id: 'orcamentos', label: 'Orçamentos', icon: Calculator, allowed: permissoes.canSeeFinancial || permissoes.canEditOrcamento },
     { id: 'planejamento', label: 'Planejamento', icon: CalendarRange, allowed: true },
     { id: 'insumos', label: 'Banco de Insumos', icon: Package, allowed: permissoes.canManageProjetos },
+    { id: 'compras', label: 'Compras', icon: ShoppingCart, allowed: permissoes.canSeeFinancial },
     { id: 'diario', label: 'Diário de Obra', icon: BookOpen, allowed: permissoes.canCreateDiario },
     { id: 'import-export', label: 'Importar/Exportar', icon: Upload, allowed: permissoes.canManageProjetos },
     { id: 'ia', label: 'Assistente de IA', icon: Sparkles, allowed: permissoes.canAccessAssistente },
@@ -172,7 +180,8 @@ function AppContent() {
     obras: 'Gerencie seus projetos e obras',
     orcamentos: 'Orçamentação com EAP e BDI',
     planejamento: 'Cronograma e linha do tempo',
-    insumos: 'Insumos, composições e equalização',
+    insumos: 'Insumos, composições e fornecedores',
+    compras: 'Solicitações, propostas e equalização por obra',
     diario: 'Registro diário de ocorrências na obra',
     'import-export': 'Importar e exportar dados',
     ia: 'Análise inteligente de obras e cronogramas',
@@ -297,7 +306,7 @@ function AppContent() {
         {/* Page content */}
         <main className="flex-1 overflow-y-auto p-4 lg:p-8">
           {page === 'dashboard' && <Dashboard selectedProjetoId={selectedProjetoId} onSelectProjeto={handleSelectProjeto} />}
-          {page === 'obras' && <Obras onSelectProjeto={handleSelectProjeto} />}
+          {page === 'obras' && <Obras onSelectProjeto={handleSelectProjeto} onPlanejarCompras={permissoes.canSeeFinancial ? handlePlanejarCompras : undefined} />}}
           {page === 'orcamentos' && (permissoes.canSeeFinancial || permissoes.canEditOrcamento) && (
             <Orcamentos
               selectedProjetoId={selectedProjetoId}
@@ -311,6 +320,12 @@ function AppContent() {
             />
           )}
           {page === 'insumos' && permissoes.canManageProjetos && <Insumos />}
+          {page === 'compras' && permissoes.canSeeFinancial && (
+            <Compras
+              selectedProjetoId={selectedProjetoId}
+              onSelectProjeto={setSelectedProjetoId}
+            />
+          )}
           {page === 'diario' && permissoes.canCreateDiario && (
             <DiarioObra
               selectedProjetoId={selectedProjetoId}

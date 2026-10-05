@@ -12,11 +12,17 @@ import {
   Lock,
   Loader2,
   RefreshCw,
+  ShoppingCart,
+  FileText,
+  Store,
+  Calendar,
+  Award,
+  PiggyBank,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useRbac } from '@/lib/rbac';
 import { formatBRL, round2, precoVenda as calcPrecoVenda, custoDireto as calcCustoDireto, avançoFisico, daysBetween } from '@/lib/calc';
-import type { Projeto, Medicao, Tarefa, OrcamentoItem, Orcamento } from '@/types/database';
+import type { Projeto, Medicao, Tarefa, OrcamentoItem, Orcamento, SolicitacaoCompra, Proposta, PropostaItem } from '@/types/database';
 
 interface DashboardProps {
   selectedProjetoId: string | null;
@@ -31,6 +37,8 @@ export default function Dashboard({ selectedProjetoId, onSelectProjeto }: Dashbo
   const [tarefas, setTarefas] = useState<Tarefa[]>([]);
   const [orcamentoItens, setOrcamentoItens] = useState<OrcamentoItem[]>([]);
   const [orcamento, setOrcamento] = useState<Orcamento | null>(null);
+  const [comprasSolicitacoes, setComprasSolicitacoes] = useState<SolicitacaoCompra[]>([]);
+  const [comprasPropostas, setComprasPropostas] = useState<(Proposta & { itens?: PropostaItem[]; fornecedor?: { nome: string } })[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reqId, setReqId] = useState(0);
@@ -73,6 +81,17 @@ export default function Dashboard({ selectedProjetoId, onSelectProjeto }: Dashbo
       setOrcamentoItens((itensData as OrcamentoItem[]) || []);
     } else {
       setOrcamentoItens([]);
+    }
+
+    // Fetch compras data if user can see financial
+    if (permissoes.canSeeFinancial) {
+      const [soliRes, propRes] = await Promise.all([
+        supabase.from('solicitacoes_compra').select('*').eq('projeto_id', projId),
+        supabase.from('propostas').select('*, fornecedor:fornecedores(nome), itens:proposta_itens(*)').eq('projeto_id', projId),
+      ]);
+      if (currentReqId !== reqId) return;
+      setComprasSolicitacoes((soliRes.data as SolicitacaoCompra[]) || []);
+      setComprasPropostas((propRes.data as (Proposta & { itens?: PropostaItem[]; fornecedor?: { nome: string } })[]) || []);
     }
 
     setLoading(false);
@@ -372,6 +391,14 @@ export default function Dashboard({ selectedProjetoId, onSelectProjeto }: Dashbo
         )}
       </div>
 
+      {/* Compras Dashboard */}
+      {permissoes.canSeeFinancial && (
+        <ComprasDashboard
+          solicitacoes={comprasSolicitacoes}
+          propostas={comprasPropostas}
+        />
+      )}
+
       {/* Status das tarefas */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6">
         <h3 className="font-bold text-slate-800 mb-4">Status das Tarefas</h3>
@@ -580,6 +607,388 @@ function DesvioChart({
       })}
       {itens.length > 10 && (
         <p className="text-xs text-slate-400 text-center pt-2">Mostrando 10 de {itens.length} itens</p>
+      )}
+    </div>
+  );
+}
+
+function calcPropostaTotal(itens: PropostaItem[], frete: number, impostos: number, descontoGlobal: number): number {
+  const subtotalItens = itens.reduce((sum, item) => {
+    const li = item.quantidade * item.preco_unitario;
+    const desc = li * (item.desconto / 100);
+    return sum + (li - desc);
+  }, 0);
+  return round2(subtotalItens + frete + impostos - descontoGlobal);
+}
+
+function isPropostaVencida(validade: string | null): boolean {
+  if (!validade) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const v = new Date(validade);
+  v.setHours(0, 0, 0, 0);
+  return v < today;
+}
+
+function ComprasDashboard({
+  solicitacoes,
+  propostas,
+}: {
+  solicitacoes: SolicitacaoCompra[];
+  propostas: (Proposta & { itens?: PropostaItem[]; fornecedor?: { nome: string } })[];
+}) {
+  const hasData = solicitacoes.length > 0 || propostas.length > 0;
+
+  if (!hasData) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 p-8">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center">
+            <ShoppingCart className="w-5 h-5 text-emerald-600" />
+          </div>
+          <div>
+            <h3 className="font-bold text-slate-800">Compras</h3>
+            <p className="text-xs text-slate-500">Indicadores de compras da obra</p>
+          </div>
+        </div>
+        <div className="text-center py-10">
+          <ShoppingCart className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm text-slate-500 mb-1">Nenhuma compra iniciada para esta obra</p>
+          <p className="text-xs text-slate-400">Acesse a aba Compras para planejar a primeira solicitação.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Indicators
+  const solicitacoesAbertas = solicitacoes.filter((s) => s.status === 'aberta');
+  const solicitacoesSemCotacao = solicitacoes.filter((s) => {
+    const hasPropostas = propostas.some((p) => p.solicitacao_id === s.id);
+    return s.status === 'aberta' && !hasPropostas;
+  });
+  const fornecedoresParticipantes = new Set(propostas.map((p) => p.fornecedor_id));
+  const propostasRecebidas = propostas.filter((p) => p.status === 'recebida' || p.status === 'em_analise' || p.status === 'aprovada');
+
+  // Valor de referência (sum of orcamento_referencia from solicitacoes)
+  const valorReferencia = round2(
+    solicitacoes.reduce((sum, s) => sum + (s.orcamento_referencia || 0), 0)
+  );
+
+  // Menor custo comparável: for each solicitacao with 2+ valid proposals, take the min total
+  let menorCustoComparavel = 0;
+  let economiaPotencial = 0;
+  for (const sol of solicitacoes) {
+    const propostasSol = propostas
+      .filter((p) => p.solicitacao_id === sol.id && p.itens && !isPropostaVencida(p.validade) && p.status !== 'rejeitada' && p.status !== 'vencida')
+      .map((p) => ({ ...p, total: calcPropostaTotal(p.itens!, p.frete, p.impostos_adicionais, p.desconto_global) }));
+    if (propostasSol.length >= 2) {
+      const minTotal = Math.min(...propostasSol.map((p) => p.total));
+      menorCustoComparavel = round2(menorCustoComparavel + minTotal);
+      if (sol.orcamento_referencia && sol.orcamento_referencia > minTotal) {
+        economiaPotencial = round2(economiaPotencial + (sol.orcamento_referencia - minTotal));
+      }
+    }
+  }
+
+  // Valor aprovado
+  const propostaAprovada = propostas.find((p) => p.status === 'aprovada' && p.itens);
+  const valorAprovado = propostaAprovada
+    ? calcPropostaTotal(propostaAprovada.itens!, propostaAprovada.frete, propostaAprovada.impostos_adicionais, propostaAprovada.desconto_global)
+    : 0;
+
+  // Economia aprovada (from compra_aprovacoes, but we don't have it in props — use diff with referencia if aprovada exists)
+  const economiaAprovada = propostaAprovada
+    ? (() => {
+        const sol = solicitacoes.find((s) => s.id === propostaAprovada.solicitacao_id);
+        if (sol?.orcamento_referencia && sol.orcamento_referencia > valorAprovado) {
+          return round2(sol.orcamento_referencia - valorAprovado);
+        }
+        return 0;
+      })()
+    : 0;
+
+  // Propostas próximas do vencimento (within 7 days)
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const propostasVencendo = propostas.filter((p) => {
+    if (!p.validade || p.status === 'aprovada' || p.status === 'rejeitada') return false;
+    const v = new Date(p.validade);
+    v.setHours(0, 0, 0, 0);
+    const dias = Math.round((v.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+    return dias >= 0 && dias <= 7;
+  });
+
+  // Entregas previstas (solicitacoes with data_necessaria in the future)
+  const entregasPrevistas = solicitacoes.filter((s) => {
+    if (!s.data_necessaria || s.status === 'entregue' || s.status === 'cancelada') return false;
+    const d = new Date(s.data_necessaria);
+    d.setHours(0, 0, 0, 0);
+    return d >= hoje;
+  });
+
+  // Compras que exigem atenção
+  const atencao: { texto: string; tipo: 'alerta' | 'info' }[] = [];
+  solicitacoesSemCotacao.forEach((s) => {
+    atencao.push({ texto: `"${s.descricao}" aberta sem propostas`, tipo: 'alerta' });
+  });
+  propostasVencendo.forEach((p) => {
+    atencao.push({ texto: `Proposta de ${p.fornecedor?.nome || 'fornecedor'} vence em breve`, tipo: 'alerta' });
+  });
+  propostas.filter((p) => isPropostaVencida(p.validade) && p.status !== 'rejeitada' && p.status !== 'aprovada').forEach((p) => {
+    atencao.push({ texto: `Proposta de ${p.fornecedor?.nome || 'fornecedor'} vencida`, tipo: 'alerta' });
+  });
+
+  // Chart data: by category
+  const categoriaCores: Record<string, string> = {
+    material: '#3b82f6',
+    servico: '#8b5cf6',
+    mao_obra: '#10b981',
+    equipamento: '#f59e0b',
+  };
+  const categoriaLabels: Record<string, string> = {
+    material: 'Material',
+    servico: 'Serviço',
+    mao_obra: 'Mão de Obra',
+    equipamento: 'Equipamento',
+  };
+  const porCategoria = new Map<string, number>();
+  solicitacoes.forEach((s) => {
+    porCategoria.set(s.categoria, (porCategoria.get(s.categoria) || 0) + 1);
+  });
+  const totalCat = Array.from(porCategoria.values()).reduce((a, b) => a + b, 0) || 1;
+
+  // Chart data: by status
+  const statusCores: Record<string, string> = {
+    aberta: '#3b82f6',
+    cotando: '#f59e0b',
+    aprovada: '#10b981',
+    cancelada: '#ef4444',
+    entregue: '#64748b',
+  };
+  const statusLabels: Record<string, string> = {
+    aberta: 'Aberta',
+    cotando: 'Cotando',
+    aprovada: 'Aprovada',
+    cancelada: 'Cancelada',
+    entregue: 'Entregue',
+  };
+  const porStatus = new Map<string, number>();
+  solicitacoes.forEach((s) => {
+    porStatus.set(s.status, (porStatus.get(s.status) || 0) + 1);
+  });
+
+  // Donut chart helper
+  function DonutChart({ data, labels, colors, size = 120 }: {
+    data: Map<string, number>;
+    labels: Record<string, string>;
+    colors: Record<string, string>;
+    size?: number;
+  }) {
+    const entries = Array.from(data.entries()).filter(([, v]) => v > 0);
+    const total = entries.reduce((s, [, v]) => s + v, 0) || 1;
+    const radius = size / 2 - 10;
+    const strokeWidth = 16;
+    const circumference = 2 * Math.PI * radius;
+    let offset = 0;
+
+    return (
+      <div className="flex items-center gap-4">
+        <svg width={size} height={size} className="flex-shrink-0">
+          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#f1f5f9" strokeWidth={strokeWidth} />
+          {entries.map(([key, value]) => {
+            const dash = (value / total) * circumference;
+            const circle = (
+              <circle
+                key={key}
+                cx={size / 2}
+                cy={size / 2}
+                r={radius}
+                fill="none"
+                stroke={colors[key] || '#94a3b8'}
+                strokeWidth={strokeWidth}
+                strokeDasharray={`${dash} ${circumference - dash}`}
+                strokeDashoffset={-offset}
+                transform={`rotate(-90 ${size / 2} ${size / 2})`}
+              />
+            );
+            offset += dash;
+            return circle;
+          })}
+          <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" className="text-2xl font-bold fill-slate-700">
+            {total}
+          </text>
+        </svg>
+        <div className="space-y-1.5">
+          {entries.map(([key, value]) => (
+            <div key={key} className="flex items-center gap-2 text-xs">
+              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: colors[key] || '#94a3b8' }} />
+              <span className="text-slate-600">{labels[key] || key}</span>
+              <span className="font-semibold text-slate-700 ml-auto">{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center">
+          <ShoppingCart className="w-5 h-5 text-emerald-600" />
+        </div>
+        <div>
+          <h3 className="font-bold text-slate-800">Compras da Obra</h3>
+          <p className="text-xs text-slate-500">Indicadores de solicitações, propostas e economia</p>
+        </div>
+      </div>
+
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <ShoppingCart className="w-4 h-4 text-blue-500" />
+            <p className="text-xs text-slate-500">Abertas sem cotação</p>
+          </div>
+          <p className="text-xl font-bold text-slate-800">{solicitacoesSemCotacao.length}</p>
+          <p className="text-xs text-slate-400">{solicitacoesAbertas.length} abertas no total</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Store className="w-4 h-4 text-violet-500" />
+            <p className="text-xs text-slate-500">Fornecedores participantes</p>
+          </div>
+          <p className="text-xl font-bold text-slate-800">{fornecedoresParticipantes.size}</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <FileText className="w-4 h-4 text-amber-500" />
+            <p className="text-xs text-slate-500">Propostas recebidas</p>
+          </div>
+          <p className="text-xl font-bold text-slate-800">{propostasRecebidas.length}</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Wallet className="w-4 h-4 text-slate-500" />
+            <p className="text-xs text-slate-500">Valor de referência</p>
+          </div>
+          <p className="text-lg font-bold text-slate-800">{formatBRL(valorReferencia)}</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Award className="w-4 h-4 text-emerald-500" />
+            <p className="text-xs text-slate-500">Menor custo comparável</p>
+          </div>
+          <p className="text-lg font-bold text-slate-800">{formatBRL(menorCustoComparavel)}</p>
+          {menorCustoComparavel === 0 && <p className="text-xs text-slate-400">Sem comparativo ainda</p>}
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            <p className="text-xs text-slate-500">Valor aprovado</p>
+          </div>
+          <p className="text-lg font-bold text-slate-800">{formatBRL(valorAprovado)}</p>
+          {valorAprovado === 0 && <p className="text-xs text-slate-400">Nenhuma aprovação</p>}
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <PiggyBank className="w-4 h-4 text-blue-500" />
+            <p className="text-xs text-slate-500">Economia potencial</p>
+          </div>
+          <p className="text-lg font-bold text-blue-600">{formatBRL(economiaPotencial)}</p>
+          {economiaPotencial === 0 && <p className="text-xs text-slate-400">Sem base de comparação</p>}
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <PiggyBank className="w-4 h-4 text-emerald-500" />
+            <p className="text-xs text-slate-500">Economia aprovada</p>
+          </div>
+          <p className="text-lg font-bold text-emerald-600">{formatBRL(economiaAprovada)}</p>
+          {economiaAprovada === 0 && <p className="text-xs text-slate-400">Sem aprovação</p>}
+        </div>
+      </div>
+
+      {/* Charts + attention list */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <h4 className="text-sm font-bold text-slate-700 mb-4">Solicitações por Categoria</h4>
+          {porCategoria.size > 0 ? (
+            <DonutChart data={porCategoria} labels={categoriaLabels} colors={categoriaCores} />
+          ) : (
+            <p className="text-sm text-slate-400 text-center py-6">Sem dados</p>
+          )}
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <h4 className="text-sm font-bold text-slate-700 mb-4">Solicitações por Status</h4>
+          {porStatus.size > 0 ? (
+            <DonutChart data={porStatus} labels={statusLabels} colors={statusCores} />
+          ) : (
+            <p className="text-sm text-slate-400 text-center py-6">Sem dados</p>
+          )}
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <h4 className="text-sm font-bold text-slate-700 mb-4">Entregas e Vencimentos</h4>
+          <div className="space-y-3">
+            {entregasPrevistas.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-slate-500 mb-1.5 flex items-center gap-1.5">
+                  <Calendar className="w-3 h-3" /> Entregas previstas
+                </p>
+                {entregasPrevistas.slice(0, 4).map((s) => (
+                  <div key={s.id} className="text-xs text-slate-600 py-0.5 flex items-center justify-between">
+                    <span className="truncate flex-1 mr-2">{s.descricao}</span>
+                    <span className="text-slate-400 flex-shrink-0">{new Date(s.data_necessaria!).toLocaleDateString('pt-BR')}</span>
+                  </div>
+                ))}
+                {entregasPrevistas.length > 4 && <p className="text-xs text-slate-400 pt-1">+{entregasPrevistas.length - 4} mais</p>}
+              </div>
+            )}
+            {propostasVencendo.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-amber-600 mb-1.5 flex items-center gap-1.5">
+                  <Clock className="w-3 h-3" /> Propostas vencendo
+                </p>
+                {propostasVencendo.map((p) => (
+                  <div key={p.id} className="text-xs text-slate-600 py-0.5 flex items-center justify-between">
+                    <span className="truncate flex-1 mr-2">{p.fornecedor?.nome || 'Fornecedor'}</span>
+                    <span className="text-amber-500 flex-shrink-0">{p.validade ? new Date(p.validade).toLocaleDateString('pt-BR') : '-'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {entregasPrevistas.length === 0 && propostasVencendo.length === 0 && (
+              <p className="text-sm text-slate-400 text-center py-6">Nada previsto</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Attention list */}
+      {atencao.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+          <h4 className="text-sm font-bold text-amber-800 mb-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            Compras que exigem atenção
+          </h4>
+          <div className="space-y-1.5">
+            {atencao.map((item, i) => (
+              <div key={i} className="flex items-center gap-2 text-sm">
+                <span className={`w-1.5 h-1.5 rounded-full ${item.tipo === 'alerta' ? 'bg-amber-500' : 'bg-blue-400'}`} />
+                <span className="text-slate-700">{item.texto}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

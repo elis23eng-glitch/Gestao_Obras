@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Building2, MapPin, Calendar, Plus, ArrowRight, X, User } from 'lucide-react';
+import { Building2, MapPin, Calendar, Plus, ArrowRight, X, User, ShoppingCart } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useRbac } from '@/lib/rbac';
 import type { Projeto } from '@/types/database';
 
 interface ObrasProps {
   onSelectProjeto: (id: string) => void;
+  onPlanejarCompras?: (id: string) => void;
 }
 
 const statusConfig: Record<Projeto['status'], { label: string; color: string; dot: string }> = {
@@ -15,7 +17,7 @@ const statusConfig: Record<Projeto['status'], { label: string; color: string; do
   cancelado: { label: 'Cancelado', color: 'bg-rose-100 text-rose-700', dot: 'bg-rose-500' },
 };
 
-export default function Obras({ onSelectProjeto }: ObrasProps) {
+export default function Obras({ onSelectProjeto, onPlanejarCompras }: ObrasProps) {
   const [projetos, setProjetos] = useState<Projeto[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -128,9 +130,20 @@ export default function Obras({ onSelectProjeto }: ObrasProps) {
                     R$ {proj.valor_contrato.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
                 </div>
-                <div className="flex items-center gap-1 text-emerald-500 text-sm font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
-                  Ver
-                  <ArrowRight className="w-4 h-4" />
+                <div className="flex flex-col items-end gap-2">
+                  <div className="flex items-center gap-1 text-emerald-500 text-sm font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+                    Ver
+                    <ArrowRight className="w-4 h-4" />
+                  </div>
+                  {onPlanejarCompras && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onPlanejarCompras(proj.id); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg text-xs font-semibold transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      <ShoppingCart className="w-3.5 h-3.5" />
+                      Planejar Compras
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

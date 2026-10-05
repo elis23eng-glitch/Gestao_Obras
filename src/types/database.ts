@@ -78,6 +78,73 @@ export interface Fornecedor {
   contato: string | null;
   telefone: string | null;
   email: string | null;
+  cpf_cnpj: string | null;
+  cidade: string | null;
+  categorias: string[];
+  ativo: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SolicitacaoCompra {
+  id: string;
+  projeto_id: string;
+  descricao: string;
+  categoria: 'material' | 'servico' | 'mao_obra' | 'equipamento';
+  insumo_id: string | null;
+  unidade: string;
+  quantidade: number;
+  data_necessaria: string | null;
+  orcamento_referencia: number | null;
+  status: 'aberta' | 'cotando' | 'aprovada' | 'cancelada' | 'entregue';
+  created_at?: string;
+  updated_at?: string;
+  insumo?: Insumo;
+}
+
+export interface Proposta {
+  id: string;
+  projeto_id: string;
+  solicitacao_id: string;
+  fornecedor_id: string;
+  numero: string | null;
+  data_proposta: string | null;
+  validade: string | null;
+  frete: number;
+  impostos_adicionais: number;
+  desconto_global: number;
+  prazo_entrega: string | null;
+  condicao_pagamento: string | null;
+  observacoes: string | null;
+  status: 'recebida' | 'em_analise' | 'aprovada' | 'rejeitada' | 'vencida';
+  import_hash: string | null;
+  pdf_path: string | null;
+  created_at?: string;
+  updated_at?: string;
+  fornecedor?: Fornecedor;
+  solicitacao?: SolicitacaoCompra;
+  itens?: PropostaItem[];
+}
+
+export interface PropostaItem {
+  id: string;
+  proposta_id: string;
+  descricao: string;
+  unidade: string;
+  quantidade: number;
+  preco_unitario: number;
+  desconto: number;
+  ordem: number;
+  created_at?: string;
+}
+
+export interface CompraAprovacao {
+  id: string;
+  proposta_id: string;
+  usuario_id: string | null;
+  justificativa: string;
+  custo_total_aprovado: number;
+  economia_aprovada: number | null;
   created_at?: string;
 }
 

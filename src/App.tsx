@@ -306,7 +306,7 @@ function AppContent() {
         {/* Page content */}
         <main className="flex-1 overflow-y-auto p-4 lg:p-8">
           {page === 'dashboard' && <Dashboard selectedProjetoId={selectedProjetoId} onSelectProjeto={handleSelectProjeto} />}
-          {page === 'obras' && <Obras onSelectProjeto={handleSelectProjeto} onPlanejarCompras={permissoes.canSeeFinancial ? handlePlanejarCompras : undefined} />}}
+          {page === 'obras' && <Obras onSelectProjeto={handleSelectProjeto} onPlanejarCompras={permissoes.canSeeFinancial ? handlePlanejarCompras : undefined} />}
           {page === 'orcamentos' && (permissoes.canSeeFinancial || permissoes.canEditOrcamento) && (
             <Orcamentos
               selectedProjetoId={selectedProjetoId}
